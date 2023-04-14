@@ -15,7 +15,15 @@ spec:
     singular: cluster
   scope: Namespaced
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - description: Status of Cluster in group
+      jsonPath: .status.status
+      name: Status
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
     schema:
       openAPIV3Schema:
         description: Cluster is the Schema for the clusters API
@@ -60,7 +68,6 @@ spec:
                 items:
                   properties:
                     env:
-                      description: overwrite env
                       items:
                         type: string
                       type: array
@@ -72,6 +79,23 @@ spec:
                       items:
                         type: string
                       type: array
+                    ssh:
+                      properties:
+                        passwd:
+                          type: string
+                        pk:
+                          type: string
+                        pkData:
+                          type: string
+                        pkName:
+                          type: string
+                        pkPasswd:
+                          type: string
+                        port:
+                          type: integer
+                        user:
+                          type: string
+                      type: object
                   type: object
                 type: array
               image:

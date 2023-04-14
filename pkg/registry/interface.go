@@ -17,6 +17,8 @@ package registry
 import (
 	"context"
 
+	"github.com/google/go-containerregistry/pkg/name"
+
 	"github.com/docker/docker/api/types"
 
 	"github.com/docker/docker/pkg/progress"
@@ -27,14 +29,11 @@ import (
 type Registry interface {
 	// SaveImages is not concurrently safe
 	SaveImages(images []string, dir string, platform v1.Platform) ([]string, error)
-	Status(json bool)
-	ListImages(registryName, search string, json bool)
-	RmiImage(registryName, imageName string) error
 }
 
 type DefaultImage struct {
 	ctx            context.Context
-	domainToImages map[string][]Named
+	domainToImages map[string][]name.Reference
 	progressOut    progress.Output
 	maxPullProcs   int
 	auths          map[string]types.AuthConfig
@@ -49,17 +48,8 @@ func NewImageSaver(ctx context.Context, maxPullProcs int, auths map[string]types
 	}
 	return &DefaultImage{
 		ctx:            ctx,
-		domainToImages: make(map[string][]Named),
+		domainToImages: make(map[string][]name.Reference),
 		maxPullProcs:   maxPullProcs,
 		auths:          auths,
-	}
-}
-
-func NewImage(auths map[string]types.AuthConfig) Registry {
-	if auths == nil {
-		auths = make(map[string]types.AuthConfig)
-	}
-	return &DefaultImage{
-		auths: auths,
 	}
 }

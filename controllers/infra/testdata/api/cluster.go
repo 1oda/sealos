@@ -14,11 +14,14 @@ kind: Cluster
 metadata:
   name: ${name}
   namespace: ${namespace}
+  annotations:
+    sealos.io/version: "4.1.5"
 spec:
   infra: ${name}
   image:
-    - labring/kubernetes:v1.24.0
-    - labring/calico:v3.22.1
+    - labring/kubernetes:v1.25.5
+    - labring/helm:v3.8.2
+    - labring/calico:v3.24.1
 `
 
 func CreateCluster(namespace string, name string) error {

@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,7 +31,6 @@ import (
 	"github.com/labring/endpoints-operator/library/controller"
 	userv1 "github.com/labring/sealos/controllers/user/api/v1"
 	"github.com/labring/sealos/controllers/user/controllers/helper"
-	"github.com/pkg/errors"
 	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -75,6 +75,7 @@ type UserReconciler struct {
 //+kubebuilder:rbac:groups=certificates.k8s.io,resources=signers,verbs=approve,resourceNames=kubernetes.io/kube-apiserver-client
 //+kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=serviceaccounts/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -159,7 +160,7 @@ func (r *UserReconciler) reconcile(ctx context.Context, obj client.Object) (ctrl
 	return ctrl.Result{}, nil
 }
 
-func (r *UserReconciler) initStatus(ctx context.Context, user *userv1.User) {
+func (r *UserReconciler) initStatus(_ context.Context, user *userv1.User) {
 	var initializedCondition = userv1.Condition{
 		Type:               userv1.Initialized,
 		Status:             v1.ConditionTrue,
@@ -180,7 +181,7 @@ func (r *UserReconciler) saveCondition(user *userv1.User, condition *userv1.Cond
 	}
 }
 
-func (r *UserReconciler) syncKubeConfig(ctx context.Context, user *userv1.User) {
+func (r *UserReconciler) syncKubeConfig(_ context.Context, user *userv1.User) {
 	cfg := &helper.Config{
 		User:                    user.Name,
 		ExpirationSeconds:       user.Spec.CSRExpirationSeconds,
@@ -298,7 +299,7 @@ func (r *UserReconciler) syncOwnerUG(ctx context.Context, user *userv1.User) {
 			ug.Annotations = map[string]string{userAnnotationOwnerKey: user.Name}
 			return nil
 		}); err != nil {
-			return errors.Wrap(err, "unable to create UserGroup")
+			return fmt.Errorf("unable to create UserGroup: %w", err)
 		}
 		r.Logger.V(1).Info("create or update UserGroup ", "OperationResult", change)
 		return nil
@@ -340,7 +341,7 @@ func (r *UserReconciler) syncOwnerUGNamespaceBinding(ctx context.Context, user *
 			}
 			return nil
 		}); err != nil {
-			return errors.Wrap(err, "unable to create namespace UserGroupBinding")
+			return fmt.Errorf("unable to create namespace UserGroupBinding: %w", err)
 		}
 		r.Logger.V(1).Info("create or update namespace UserGroupBinding", "OperationResult", change)
 		return nil
@@ -350,7 +351,7 @@ func (r *UserReconciler) syncOwnerUGNamespaceBinding(ctx context.Context, user *
 	}
 }
 
-func (r *UserReconciler) syncFinalStatus(ctx context.Context, user *userv1.User) {
+func (r *UserReconciler) syncFinalStatus(_ context.Context, user *userv1.User) {
 	condition := &userv1.Condition{
 		Type:               userv1.Ready,
 		Status:             v1.ConditionTrue,
@@ -373,18 +374,12 @@ func (r *UserReconciler) syncFinalStatus(ctx context.Context, user *userv1.User)
 }
 
 func (r *UserReconciler) updateStatus(ctx context.Context, nn types.NamespacedName, status *userv1.UserStatus) error {
-	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		original := &userv1.User{}
 		if err := r.Get(ctx, nn, original); err != nil {
 			return err
 		}
 		original.Status = *status
-		if err := r.Client.Status().Update(ctx, original); err != nil {
-			return err
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	return nil
+		return r.Client.Status().Update(ctx, original)
+	})
 }

@@ -16,43 +16,41 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/labring/sealos/pkg/apply"
 	"github.com/labring/sealos/pkg/apply/processor"
 	"github.com/labring/sealos/pkg/buildah"
-	"github.com/labring/sealos/pkg/utils/iputils"
 	"github.com/labring/sealos/pkg/utils/logger"
 )
 
 var exampleRun = `
 create cluster to your baremetal server, appoint the iplist:
 	sealos run labring/kubernetes:v1.24.0 --masters 192.168.0.2,192.168.0.3,192.168.0.4 \
-		--nodes 192.168.0.5,192.168.0.6,192.168.0.7 --passwd xxx
+		--nodes 192.168.0.5,192.168.0.6,192.168.0.7 --passwd 'xxx'
   multi image:
     sealos run labring/kubernetes:v1.24.0 calico:v3.24.1 \
         --masters 192.168.64.2,192.168.64.22,192.168.64.20 --nodes 192.168.64.21,192.168.64.19
   Specify server InfraSSH port :
-  All servers use the same InfraSSH port (default port: 22)：
+  All servers use the same InfraSSH port (default port: 22):
 	sealos run labring/kubernetes:v1.24.0 --masters 192.168.0.2,192.168.0.3,192.168.0.4 \
-	--nodes 192.168.0.5,192.168.0.6,192.168.0.7 --port 24 --passwd xxx
-  Different InfraSSH port numbers exist：
+	--nodes 192.168.0.5,192.168.0.6,192.168.0.7 --port 24 --passwd 'xxx'
+  Different InfraSSH port numbers exist:
 	sealos run labring/kubernetes:v1.24.0 --masters 192.168.0.2,192.168.0.3:23,192.168.0.4:24 \
-	--nodes 192.168.0.5:25,192.168.0.6:25,192.168.0.7:27 --passwd xxx
+	--nodes 192.168.0.5:25,192.168.0.6:25,192.168.0.7:27 --passwd 'xxx'
   
   Custom VIP kubernetes cluster:
     sealos run -e defaultVIP=10.103.97.2 labring/kubernetes:v1.24.0 --masters 192.168.0.2,192.168.0.3,192.168.0.4 \
-	--nodes 192.168.0.5,192.168.0.6,192.168.0.7 --passwd xxx
+	--nodes 192.168.0.5,192.168.0.6,192.168.0.7 --passwd 'xxx'
   
-  Single kubernetes cluster：
+  Single kubernetes cluster:
 	sealos run labring/kubernetes:v1.24.0 --single
   
 
 create a cluster with custom environment variables:
 	sealos run -e DashBoardPort=8443 mydashboard:latest  --masters 192.168.0.2,192.168.0.3,192.168.0.4 \
-	--nodes 192.168.0.5,192.168.0.6,192.168.0.7 --passwd xxx
+	--nodes 192.168.0.5,192.168.0.6,192.168.0.7 --passwd 'xxx'
 `
 
 func newRunCmd() *cobra.Command {
@@ -60,7 +58,6 @@ func newRunCmd() *cobra.Command {
 		Cluster: &apply.Cluster{},
 		SSH:     &apply.SSH{},
 	}
-	var runSingle bool
 	var transport string
 	var runCmd = &cobra.Command{
 		Use:     "run",
@@ -68,12 +65,7 @@ func newRunCmd() *cobra.Command {
 		Long:    `sealos run labring/kubernetes:v1.24.0 --masters [arg] --nodes [arg]`,
 		Example: exampleRun,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if runSingle {
-				addr, _ := iputils.ListLocalHostAddrs()
-				runArgs.Masters = iputils.LocalIP(addr)
-			}
-
-			images, err := args2Images(args, transport)
+			images, err := buildah.PreloadIfTarFile(args, transport)
 			if err != nil {
 				return err
 			}
@@ -85,43 +77,19 @@ func newRunCmd() *cobra.Command {
 			return applier.Apply()
 		},
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if err := buildah.ValidateTransport(transport); err != nil {
-				return err
-			}
-			return nil
+			return buildah.ValidateTransport(transport)
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			logger.Info(getContact())
 		},
 	}
 	runArgs.RegisterFlags(runCmd.Flags())
-	runCmd.Flags().BoolVar(&runSingle, "single", false, "run cluster in single mode")
+	runCmd.Flags().BoolVar(new(bool), "single", false, "run cluster in single mode")
+	if err := runCmd.Flags().MarkDeprecated("single", "it defaults to running cluster in single mode when there are no master and node"); err != nil {
+		logger.Error(err)
+	}
 	runCmd.Flags().BoolVarP(&processor.ForceOverride, "force", "f", false, "force override app in this cluster")
 	runCmd.Flags().StringVarP(&transport, "transport", "t", buildah.OCIArchive,
 		fmt.Sprintf("load image transport from tar archive file.(optional value: %s, %s)", buildah.OCIArchive, buildah.DockerArchive))
 	return runCmd
-}
-
-func init() {
-	rootCmd.AddCommand(newRunCmd())
-}
-
-func args2Images(args []string, transport string) ([]string, error) {
-	var images []string
-	bder, err := buildah.New("")
-	if err != nil {
-		return images, err
-	}
-	for _, arg := range args {
-		if strings.HasSuffix(arg, ".tar") || strings.HasSuffix(arg, ".gz") {
-			id, err := bder.Load(arg, transport)
-			if err != nil {
-				return images, err
-			}
-			images = append(images, id)
-		} else {
-			images = append(images, arg)
-		}
-	}
-	return images, nil
 }

@@ -104,10 +104,7 @@ func newLoginCommand() *cobra.Command {
 			}
 			sealosKubeconfPath := fmt.Sprintf("%s/%s", sealosKubeConfdir, "config")
 			// copy file, will overwrite the original file
-			if err := fileutil.Copy(opts.kubeconfig, sealosKubeconfPath); err != nil {
-				return err
-			}
-			return nil
+			return fileutil.Copy(opts.kubeconfig, sealosKubeconfPath)
 		},
 		Example: fmt.Sprintf(`%s login quay.io`, rootCmd.CommandPath()),
 	}
@@ -125,7 +122,7 @@ func loginCmd(c *cobra.Command, args []string, iopts *loginReply) error {
 	if len(args) == 0 {
 		return errors.New("please specify a registry to login to")
 	}
-	if err := setDefaultFlags(c); err != nil {
+	if err := setDefaultFlagsWithSetters(c, setDefaultTLSVerifyFlag); err != nil {
 		return err
 	}
 

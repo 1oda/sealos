@@ -17,9 +17,9 @@ limitations under the License.
 package v1
 
 import (
+	"errors"
 	"strings"
 
-	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -62,19 +62,13 @@ var _ webhook.Validator = &UserGroupBinding{}
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
 func (r *UserGroupBinding) ValidateCreate() error {
 	usergroupbindinglog.Info("validate create", "name", r.Name)
-	if err := r.validateWebhook(); err != nil {
-		return err
-	}
-	return nil
+	return r.validateWebhook()
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
-func (r *UserGroupBinding) ValidateUpdate(old runtime.Object) error {
+func (r *UserGroupBinding) ValidateUpdate(_ runtime.Object) error {
 	usergroupbindinglog.Info("validate update", "name", r.Name)
-	if err := r.validateWebhook(); err != nil {
-		return err
-	}
-	return nil
+	return r.validateWebhook()
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type

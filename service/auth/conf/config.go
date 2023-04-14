@@ -15,8 +15,8 @@
 package conf
 
 import (
-	"github.com/labring/sealos/pkg/auth/conf"
 	"github.com/labring/sealos/pkg/utils/yaml"
+	"github.com/labring/sealos/service/auth/pkg/conf"
 )
 
 var GlobalConfig Config
@@ -28,8 +28,5 @@ type Config struct {
 }
 
 func InitConfig(configPath string) error {
-	if err := yaml.UnmarshalYamlFromFile(configPath, &GlobalConfig); err != nil {
-		return err
-	}
-	return nil
+	return yaml.UnmarshalYamlFromFile(configPath, &GlobalConfig)
 }

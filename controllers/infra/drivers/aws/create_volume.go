@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"time"
+
+	"github.com/labring/sealos/pkg/utils/logger"
 
 	"golang.org/x/sync/errgroup"
 
@@ -42,14 +43,12 @@ func (d Driver) createAndAttachVolumes(infra *v1.Infra, host *v1.Hosts, disks []
 			return d.createAndAttachVolume(infra, host, &disk)
 		})
 	}
-	if err := eg.Wait(); err != nil {
-		return err
-	}
-	return nil
+	return eg.Wait()
 }
 
 func (d Driver) createAndAttachVolume(infra *v1.Infra, host *v1.Hosts, disk *v1.Disk) error {
-	deviceName, err := generateDataDiskDeviceName(disk.Index - 1)
+	deviceName, err := d.generateNewDeviceName(host)
+	logger.Info("generate new device name: %s", deviceName)
 	if err != nil {
 		return err
 	}
@@ -63,16 +62,19 @@ func (d Driver) createAndAttachVolume(infra *v1.Infra, host *v1.Hosts, disk *v1.
 	for _, v := range host.Metadata {
 		//Volume_tag: [role:true,Data:true,name:namespace+name]
 		tags := rolesToTags(host.Roles)
+		id := v.ID
+
 		nameKey, fullName := common.InfraVolumesLabel, infra.GetInstancesAndVolumesTag()
-		dataLable, value := common.DataVolumeLabel, common.TRUELable
+		infraIDKey, infraIDValue := common.VolumeInfraID, id
+
 		tags = append(tags, []types.Tag{
 			{
 				Key:   &nameKey,
 				Value: &fullName,
 			},
 			{
-				Key:   &dataLable,
-				Value: &value,
+				Key:   &infraIDKey,
+				Value: &infraIDValue,
 			},
 		}...,
 		)
@@ -92,32 +94,10 @@ func (d Driver) createAndAttachVolume(infra *v1.Infra, host *v1.Hosts, disk *v1.
 		if err != nil {
 			return fmt.Errorf("create volume failed: %v", err)
 		}
-		id := v.ID
 		inputAttach := &ec2.AttachVolumeInput{
 			Device:     &deviceName,
 			VolumeId:   result.VolumeId,
 			InstanceId: &id,
-		}
-		//add index and InfraID tag to volume
-		indexKey, indexValue := common.InfraVolumeIndex, strconv.Itoa(disk.Index)
-		indexTag := types.Tag{
-			Key:   &indexKey,
-			Value: &indexValue,
-		}
-		infraIDKey, infraIDValue := common.VolumeInfraID, id
-		infraIDTag := types.Tag{
-			Key:   &infraIDKey,
-			Value: &infraIDValue,
-		}
-		inputTags := &ec2.CreateTagsInput{
-			Resources: []string{*result.VolumeId},
-			Tags: []types.Tag{
-				indexTag,
-				infraIDTag,
-			},
-		}
-		if _, err := MakeTags(context.TODO(), client, inputTags); err != nil {
-			return fmt.Errorf("create volume tags failed: %v", err)
 		}
 
 		//retry 1s,2s,4,8,16,32,64. 8times
@@ -125,10 +105,26 @@ func (d Driver) createAndAttachVolume(infra *v1.Infra, host *v1.Hosts, disk *v1.
 			return retryAttachVolume(common.TryTimes, common.TrySleepTime, client, inputAttach)
 		})
 	}
-	if err := eg.Wait(); err != nil {
-		return err
+	return eg.Wait()
+}
+
+// generateNewDeviceName generate new device name for new volume.
+func (d Driver) generateNewDeviceName(host *v1.Hosts) (string, error) {
+	var deviceName string
+	deviceIndex := 0
+	var deviceSuffix = "fghijklmnop"
+	deviceMap := map[string]struct{}{}
+	for _, v := range host.Disks {
+		deviceMap[v.Device] = struct{}{}
 	}
-	return nil
+	for i := 0; i < len(deviceSuffix); i++ {
+		deviceName = fmt.Sprintf("/dev/sd%s", string(deviceSuffix[i]))
+		if _, ok := deviceMap[deviceName]; !ok {
+			deviceIndex = i
+			break
+		}
+	}
+	return fmt.Sprintf("/dev/sd%s", string(deviceSuffix[deviceIndex])), nil
 }
 
 func retryAttachVolume(tryTimes int, trySleepTime time.Duration, client *ec2.Client, inputAttach *ec2.AttachVolumeInput) error {

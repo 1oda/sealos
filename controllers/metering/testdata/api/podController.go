@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+
 	meteringv1 "github.com/labring/sealos/controllers/metering/api/v1"
 	baseapi "github.com/labring/sealos/test/testdata/api"
 	v1 "k8s.io/api/core/v1"
@@ -20,14 +21,20 @@ spec:
   resources:
     cpu:
       unit: "1"
-      price: 1
+      price: 670
       describe: "cost per cpu per hour（price:100 = 1¥）"
-
+    memory:
+      unit: "1G"
+      price:  330
+      describe: "cost per gigabyte of storage per hour（price:100 = 1¥）"
+    ephemeral-storage:
+      unit: "1G"
+      price:  21
+      describe: "cost per gigabyte of storage per hour（price:100 = 1¥）"
     storage:
       unit: "1G"
-      price:  1
+      price:  21
       describe: "cost per gigabyte of storage per hour（price:100 = 1¥）"
-
 `
 
 func CreatePodController(namespace string, name string) {
@@ -76,13 +83,13 @@ spec:
       image: nginx:1.14.2
       resources:
         requests:
-          cpu: 1000m
-          memory: 1Gi
+          cpu: 50m
+          memory: 100Mi
           ephemeral-storage: 1Gi
 
         limits:
-          cpu: 1000m
-          memory: 1Gi
+          cpu: 100m
+          memory: 100Mi
           ephemeral-storage: 1Gi
       ports:
         - containerPort: 80
@@ -122,8 +129,15 @@ spec:
       storage: 1Gi
 `
 
-func CreatPod(namespace string, name string) {
+func MustCreatPod(namespace string, name string) {
 	baseapi.MustKubeApplyFromTemplate(PodYaml, map[string]string{
+		"namespace": namespace,
+		"name":      name,
+	})
+}
+
+func CreatePod(namespace string, name string) (string, error) {
+	return baseapi.KubeApplyFromTemplate(PodYaml, map[string]string{
 		"namespace": namespace,
 		"name":      name,
 	})
@@ -144,7 +158,7 @@ func EnsurePod(namespace string, name string) {
 	client := baseapi.GetDefaultKubernetesClient()
 	_, err := client.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 	if err != nil {
-		CreatPod(namespace, name)
+		MustCreatPod(namespace, name)
 		return
 	}
 }

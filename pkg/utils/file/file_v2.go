@@ -16,6 +16,7 @@ package file
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,8 +24,6 @@ import (
 	"strings"
 
 	"github.com/labring/sealos/pkg/utils/logger"
-
-	"github.com/pkg/errors"
 )
 
 // Filename returns the file name after the last "/".
@@ -49,6 +48,10 @@ func IsFile(filePath string) bool {
 		return false
 	}
 	return !f.IsDir()
+}
+
+func IsTarFile(s string) bool {
+	return strings.HasSuffix(s, ".tar") || strings.HasSuffix(s, ".gz") || strings.HasSuffix(s, ".tgz")
 }
 
 // IsDir returns if the given path is a directory.

@@ -22,23 +22,23 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/labring/sealos/pkg/utils/exec"
-	"github.com/labring/sealos/pkg/utils/file"
-	"github.com/labring/sealos/pkg/utils/yaml"
-
-	"github.com/pkg/errors"
-	"k8s.io/client-go/tools/clientcmd"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
-	"k8s.io/client-go/util/cert"
-
-	v1 "k8s.io/kubernetes/cmd/kubeadm/app/apis/bootstraptoken/v1"
+	"github.com/labring/sealos/pkg/utils/logger"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/client-go/util/cert"
+	v1 "k8s.io/kubernetes/cmd/kubeadm/app/apis/bootstraptoken/v1"
+
+	"github.com/labring/sealos/pkg/utils/exec"
+	"github.com/labring/sealos/pkg/utils/file"
+	"github.com/labring/sealos/pkg/utils/yaml"
 )
 
 type Token struct {
@@ -50,15 +50,23 @@ type Token struct {
 
 const defaultAdminConf = "/etc/kubernetes/admin.conf"
 
-func Generator() (*Token, error) {
+func Generator(config, certificateKey string) (*Token, error) {
 	token := &Token{}
 	if _, ok := exec.CheckCmdIsExist("kubeadm"); ok && file.IsExist(defaultAdminConf) {
 		key, _ := CreateCertificateKey()
+		if certificateKey != "" {
+			key = certificateKey
+		}
 		token.CertificateKey = key
-		const uploadCertTemplate = "kubeadm init phase upload-certs --upload-certs --certificate-key %s"
-		_, _ = exec.RunBashCmd(fmt.Sprintf(uploadCertTemplate, key))
+		uploadCertTemplate := fmt.Sprintf("kubeadm init phase upload-certs --upload-certs --certificate-key %s", key)
+		if config != "" {
+			uploadCertTemplate = fmt.Sprintf("kubeadm init phase upload-certs --config %s --upload-certs", config)
+		}
+		logger.Debug("token uploadCertTemplate cmd: %s", uploadCertTemplate)
+		_, _ = exec.RunBashCmd(uploadCertTemplate)
 		tokens := ListToken()
 		const tokenTemplate = "kubeadm token create --print-join-command --certificate-key %s --ttl 2h"
+		logger.Debug("token tokenTemplate cmd: %s", tokenTemplate)
 		_, _ = exec.RunBashCmd(fmt.Sprintf(tokenTemplate, key))
 		afterTokens := ListToken()
 		diff := afterTokens.ToStrings().Difference(tokens.ToStrings())
@@ -142,12 +150,12 @@ func discoveryTokenCaCertHash(adminPath string) ([]string, error) {
 	if clusterConfig.CertificateAuthorityData != nil {
 		caCerts, err = cert.ParseCertsPEM(clusterConfig.CertificateAuthorityData)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to parse CA certificate from kubeconfig")
+			return nil, fmt.Errorf("failed to parse CA certificate from kubeconfig: %w", err)
 		}
 	} else if clusterConfig.CertificateAuthority != "" {
 		caCerts, err = cert.CertsFromFile(clusterConfig.CertificateAuthority)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to load CA certificate referenced by kubeconfig")
+			return nil, fmt.Errorf("failed to load CA certificate referenced by kubeconfig: %w", err)
 		}
 	} else {
 		return nil, errors.New("no CA certificates found in kubeconfig")

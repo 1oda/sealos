@@ -18,11 +18,11 @@ package controllers
 
 import (
 	"context"
+	"errors"
 
 	"github.com/go-logr/logr"
 	"github.com/labring/endpoints-operator/library/controller"
 	imagehubv1 "github.com/labring/sealos/controllers/imagehub/api/v1"
-	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -87,7 +87,10 @@ func (r *ImageReconciler) reconcile(ctx context.Context, obj client.Object) (ctr
 	repo.Name = img.Spec.Name.ToRepoName().ToMetaName()
 	err := r.Get(ctx, client.ObjectKeyFromObject(repo), repo)
 	if err != nil && apierrors.IsNotFound(err) {
-		repo.Spec.Name = img.Spec.Name.ToRepoName()
+		repo.Spec = imagehubv1.RepositorySpec{
+			Name:      img.Spec.Name.ToRepoName(),
+			IsPrivate: false,
+		}
 		if err := r.Create(ctx, repo); err != nil {
 			r.Logger.Error(err, "error in create")
 			return ctrl.Result{Requeue: true}, err
@@ -110,7 +113,7 @@ func (r *ImageReconciler) reconcile(ctx context.Context, obj client.Object) (ctr
 	return ctrl.Result{}, nil
 }
 
-func (r *ImageReconciler) doFinalizer(ctx context.Context, obj client.Object) error {
+func (r *ImageReconciler) doFinalizer(_ context.Context, _ client.Object) error {
 	return nil
 }
 

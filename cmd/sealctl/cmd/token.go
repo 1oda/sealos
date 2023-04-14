@@ -15,6 +15,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -29,13 +30,20 @@ func newTokenCmd() *cobra.Command {
 		Use:   "token",
 		Short: "token generator",
 		Run: func(cmd *cobra.Command, args []string) {
-			t, err := runtime.Generator()
+			var config, certificateKey string
+			if len(args) > 0 {
+				config = args[0]
+			}
+			if len(args) > 1 {
+				certificateKey = args[1]
+			}
+			t, err := runtime.Generator(config, certificateKey)
 			if err != nil {
 				logger.Error("exec token error: " + err.Error())
 				os.Exit(1)
 			}
 			data, _ := json.Marshal(t)
-			println(string(data))
+			fmt.Println(string(data))
 		},
 	}
 	return tokenCmd

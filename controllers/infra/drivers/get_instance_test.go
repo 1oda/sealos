@@ -9,11 +9,12 @@ import (
 	v1 "github.com/labring/sealos/controllers/infra/api/v1"
 )
 
-func TestDriver_GetInstancesByLabel(t *testing.T) {
+func TestDriver_GetInstances(t *testing.T) {
 	type args struct {
-		key   string
-		value string
-		infra *v1.Infra
+		key    string
+		value  string
+		infra  *v1.Infra
+		status string
 	}
 	tests := []struct {
 		name    string
@@ -24,13 +25,18 @@ func TestDriver_GetInstancesByLabel(t *testing.T) {
 		{
 			"test get instance",
 			args{
-				key:   "master",
-				value: "true",
+				key:    "master",
+				value:  "true",
+				status: "running",
 				infra: &v1.Infra{
 					TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "sealos-infra",
 						Namespace: "sealos-infra-ns",
+						UID:       "0abafc31-735b-4a9c-923f-493af2ed1b25",
+					},
+					Spec: v1.InfraSpec{
+						AvailabilityZone: "cn-hangzhou-i",
 					},
 				},
 			},
@@ -42,19 +48,16 @@ func TestDriver_GetInstancesByLabel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d, err := NewDriver()
+			d, err := NewDriver("aliyun")
 			if err != nil {
 				t.Errorf("create driver failed: %v", err)
 			}
-			got, err := d.GetInstancesByLabel(tt.args.key, tt.args.value, tt.args.infra)
+			host, err := d.GetInstances(tt.args.infra, tt.args.status)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("GetInstancesByLabel() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("GetInstances() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if got.Count != tt.want.Count {
-				t.Errorf("GetInstancesByLabel() got = %v, want %v", got, tt.want)
-			}
-			fmt.Println("got hosts: ", got)
+			fmt.Println("got hosts: ", host[0].Metadata)
 		})
 	}
 }

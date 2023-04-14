@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"os"
 	"time"
 
 	apisix "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/apis/config/v2beta3"
@@ -49,20 +50,29 @@ const (
 	LetterBytes         = "abcdefghijklmnopqrstuvwxyz0123456789"
 )
 
+const (
+	DefaultDomain          = "cloud.sealos.io"
+	DefaultSecretName      = "wildcard-cloud-sealos-io-cert"
+	DefaultSecretNamespace = "sealos-system"
+)
+
 // request and limit for terminal pod
 const (
-	CPURequest    = "0.04"
-	MemoryRequest = "64Mi"
-	CPULimit      = "0.5"
-	MemoryLimit   = "64Mi"
+	CPURequest    = "0.01"
+	MemoryRequest = "16Mi"
+	CPULimit      = "0.3"
+	MemoryLimit   = "256Mi"
 )
 
 // TerminalReconciler reconciles a Terminal object
 type TerminalReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	recorder record.EventRecorder
-	Config   *rest.Config
+	Scheme          *runtime.Scheme
+	recorder        record.EventRecorder
+	Config          *rest.Config
+	terminalDomain  string
+	secretName      string
+	secretNamespace string
 }
 
 //+kubebuilder:rbac:groups=terminal.sealos.io,resources=terminals,verbs=get;list;watch;create;update;patch;delete
@@ -146,7 +156,7 @@ func (r *TerminalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 func (r *TerminalReconciler) syncIngress(ctx context.Context, terminal *terminalv1.Terminal, hostname string) error {
 	var err error
-	host := hostname + DomainSuffix
+	host := hostname + r.terminalDomain
 	switch terminal.Spec.IngressType {
 	case terminalv1.Nginx:
 		err = r.syncNginxIngress(ctx, terminal, host)
@@ -165,7 +175,7 @@ func (r *TerminalReconciler) syncApisixIngress(ctx context.Context, terminal *te
 		},
 	}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, apisixRoute, func() error {
-		expectRoute := createApisixRoute(terminal, host)
+		expectRoute := r.createApisixRoute(terminal, host)
 		if len(apisixRoute.Spec.HTTP) == 0 {
 			apisixRoute.Spec.HTTP = expectRoute.Spec.HTTP
 		} else {
@@ -175,10 +185,7 @@ func (r *TerminalReconciler) syncApisixIngress(ctx context.Context, terminal *te
 			apisixRoute.Spec.HTTP[0].Timeout = expectRoute.Spec.HTTP[0].Timeout
 			apisixRoute.Spec.HTTP[0].Authentication = expectRoute.Spec.HTTP[0].Authentication
 		}
-		if err := controllerutil.SetControllerReference(terminal, apisixRoute, r.Scheme); err != nil {
-			return err
-		}
-		return nil
+		return controllerutil.SetControllerReference(terminal, apisixRoute, r.Scheme)
 	}); err != nil {
 		return err
 	}
@@ -191,17 +198,14 @@ func (r *TerminalReconciler) syncApisixIngress(ctx context.Context, terminal *te
 		},
 	}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, apisixTLS, func() error {
-		expectTLS := createApisixTLS(terminal, host)
+		expectTLS := r.createApisixTLS(terminal, host)
 		if apisixTLS.Spec != nil {
 			apisixTLS.Spec.Hosts = expectTLS.Spec.Hosts
 			apisixTLS.Spec.Secret = expectTLS.Spec.Secret
 		} else {
 			apisixTLS.Spec = expectTLS.Spec
 		}
-		if err := controllerutil.SetControllerReference(terminal, apisixTLS, r.Scheme); err != nil {
-			return err
-		}
-		return nil
+		return controllerutil.SetControllerReference(terminal, apisixTLS, r.Scheme)
 	}); err != nil {
 		return err
 	}
@@ -223,15 +227,12 @@ func (r *TerminalReconciler) syncNginxIngress(ctx context.Context, terminal *ter
 		},
 	}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, ingress, func() error {
-		expectIngress := createNginxIngress(terminal, host)
+		expectIngress := r.createNginxIngress(terminal, host)
 		ingress.ObjectMeta.Labels = expectIngress.ObjectMeta.Labels
 		ingress.ObjectMeta.Annotations = expectIngress.ObjectMeta.Annotations
 		ingress.Spec.Rules = expectIngress.Spec.Rules
 		ingress.Spec.TLS = expectIngress.Spec.TLS
-		if err := controllerutil.SetControllerReference(terminal, ingress, r.Scheme); err != nil {
-			return err
-		}
-		return nil
+		return controllerutil.SetControllerReference(terminal, ingress, r.Scheme)
 	}); err != nil {
 		return err
 	}
@@ -280,10 +281,7 @@ func (r *TerminalReconciler) syncService(ctx context.Context, terminal *terminal
 			service.Spec.Ports[0].TargetPort = expectService.Spec.Ports[0].TargetPort
 			service.Spec.Ports[0].Protocol = expectService.Spec.Ports[0].Protocol
 		}
-		if err := controllerutil.SetControllerReference(terminal, service, r.Scheme); err != nil {
-			return err
-		}
-		return nil
+		return controllerutil.SetControllerReference(terminal, service, r.Scheme)
 	}); err != nil {
 		return err
 	}
@@ -389,10 +387,7 @@ func (r *TerminalReconciler) syncDeployment(ctx context.Context, terminal *termi
 			*hostname = deployment.Spec.Template.Spec.Hostname
 		}
 
-		if err := controllerutil.SetControllerReference(terminal, deployment, r.Scheme); err != nil {
-			return err
-		}
-		return nil
+		return controllerutil.SetControllerReference(terminal, deployment, r.Scheme)
 	}); err != nil {
 		return err
 	}
@@ -444,9 +439,36 @@ func buildLabelsMap(terminal *terminalv1.Terminal) map[string]string {
 	return labelsMap
 }
 
+func getDomain() string {
+	domain := os.Getenv("DOMAIN")
+	if domain == "" {
+		return DefaultDomain
+	}
+	return domain
+}
+
+func getSecretName() string {
+	secretName := os.Getenv("SECRET_NAME")
+	if secretName == "" {
+		return DefaultSecretName
+	}
+	return secretName
+}
+
+func getSecretNamespace() string {
+	secretNamespace := os.Getenv("SECRET_NAMESPACE")
+	if secretNamespace == "" {
+		return DefaultSecretNamespace
+	}
+	return secretNamespace
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *TerminalReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.recorder = mgr.GetEventRecorderFor("sealos-terminal-controller")
+	r.terminalDomain = "." + getDomain()
+	r.secretName = getSecretName()
+	r.secretNamespace = getSecretNamespace()
 	r.Config = mgr.GetConfig()
 	owner := &handler.EnqueueRequestForOwner{OwnerType: &terminalv1.Terminal{}, IsController: false}
 	return ctrl.NewControllerManagedBy(mgr).

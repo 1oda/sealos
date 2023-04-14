@@ -6,6 +6,18 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - account.sealos.io
+  resources:
+  - accountbalances
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - ""
   resources:
   - namespaces
@@ -42,19 +54,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - infra.sealos.io
-  resources:
-  - infras
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - metering.sealos.io
+  - metering.common.sealos.io
   resources:
   - extensionresourceprices
   verbs:
@@ -65,6 +65,26 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - metering.common.sealos.io
+  resources:
+  - resources
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - metering.common.sealos.io
+  resources:
+  - resources/status
+  verbs:
+  - get
+  - patch
+  - update
 - apiGroups:
   - metering.sealos.io
   resources:
@@ -117,27 +137,3 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - metering.sealos.io
-  resources:
-  - resources
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - accountbalances
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch

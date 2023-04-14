@@ -21,9 +21,9 @@ import (
 	"runtime"
 	"runtime/pprof"
 
-	"github.com/containers/buildah/pkg/parse"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/storage"
+	"github.com/containers/storage/pkg/unshare"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -62,6 +62,7 @@ func (opts *globalFlags) HiddenFlags() []string {
 		"cpu-profile",
 		"default-mounts-file",
 		"memory-profile",
+		"root", "runroot", "storage-driver", "storage-opt",
 	}
 }
 
@@ -71,7 +72,7 @@ func RegisterGlobalFlags(fs *pflag.FlagSet) error {
 	var (
 		defaultStoreDriverOptions []string
 	)
-	storageOptions, err := storage.DefaultStoreOptions(false, 0)
+	storageOptions, err := storage.DefaultStoreOptions(unshare.GetRootlessUID() > 0, unshare.GetRootlessUID())
 	if err != nil {
 		return err
 	}
@@ -120,40 +121,46 @@ func markFlagsHidden(fs *pflag.FlagSet, names ...string) error {
 	return nil
 }
 
-func subCommands() []*cobra.Command {
+func AllImageSubCommands() []*cobra.Command {
 	return []*cobra.Command{
 		newBuildCommand(),
-		newContainersCommand(),
 		newCreateCmd(),
-		newFromCommand(),
-		newImagesCommand(),
+		newDiffCommand(),
 		newInspectCommand(),
+		newImagesCommand(),
 		newLoadCommand(),
 		newLoginCommand(),
 		newLogoutCommand(),
 		newManifestCommand(),
-		newMountCommand(),
 		newMergeCommand(),
 		newPullCommand(),
 		newPushCommand(),
-		newRMCommand(),
 		newRMICommand(),
 		newSaveCommand(),
 		newTagCommand(),
-		newUmountCommand(),
-		newUnshareCommand(),
 	}
 }
 
+func AllContainerSubCommands() []*cobra.Command {
+	return []*cobra.Command{
+		newContainersCommand(),
+		newFromCommand(),
+		newMountCommand(),
+		newRMCommand(),
+		newUmountCommand(),
+	}
+}
+
+func AllSubCommands() []*cobra.Command {
+	return append(AllContainerSubCommands(), append(AllImageSubCommands(), newUnshareCommand())...)
+}
+
 func RegisterRootCommand(cmd *cobra.Command) {
-	os.Setenv("TMPDIR", parse.GetTempDir())
 	rootCmd = cmd
 	cmd.SilenceUsage = true
-	err := RegisterGlobalFlags(cmd.PersistentFlags())
-	bailOnError(err, "failed to register global flags")
+	bailOnError(RegisterGlobalFlags(cmd.PersistentFlags()), "failed to register global flags")
 	wrapPrePersistentRun(cmd)
 	wrapPostPersistentRun(cmd)
-	cmd.AddCommand(subCommands()...)
 }
 
 func RegisterPostRun(fn func() error) {

@@ -40,6 +40,10 @@ lvscare:
 docker pull ghcr.io/${USERNAME:-labring}/lvscare:${VERSION}
 \`\`\`
 
+EOF
+
+if [[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+cat << EOF >> Note.md
 ### APT 源
 
 Use your public APT Repository URL to install DEB packages:
@@ -51,8 +55,9 @@ https://apt.fury.io/${USERNAME:-labring}/
 To enable, add the following file **/etc/apt/sources.list.d/fury.list**:
 
 \`\`\`
-deb [trusted=yes] https://apt.fury.io/${USERNAME:-labring}/ /
+deb [trusted=yes] https://apt.repo.sealos.io/ /
 \`\`\`
+
 
 ### Yum源
 
@@ -67,8 +72,14 @@ To enable, add the following file **/etc/yum.repos.d/fury.repo**:
 \`\`\`
 [fury]
 name=Gemfury Private Repo
-baseurl=https://yum.fury.io/${USERNAME:-labring}/
+baseurl=https://yum.repo.sealos.io/
 enabled=1
 gpgcheck=0
 \`\`\`
 EOF
+fi
+cat << EOF >> Note.md
+
+See [the CHANGELOG](https://github.com/${USERNAME:-labring}/sealos/blob/main/CHANGELOG/CHANGELOG.md) for more details.
+EOF
+

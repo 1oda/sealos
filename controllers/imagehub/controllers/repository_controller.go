@@ -18,12 +18,12 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"sort"
 
 	"github.com/go-logr/logr"
 	"github.com/labring/endpoints-operator/library/controller"
 	imagehubv1 "github.com/labring/sealos/controllers/imagehub/api/v1"
-	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -110,18 +110,18 @@ func (r *RepositoryReconciler) reconcile(ctx context.Context, obj client.Object)
 	tagList := imagehubv1.TagList{}
 	for _, img := range imgList.Items {
 		tagList = append(tagList, imagehubv1.TagData{
-			Name:     img.Spec.Name.GetTag(),
-			MetaName: img.Name,
-			Size:     img.Spec.DetailInfo.Size,
-			CTime:    img.CreationTimestamp,
+			Name:       img.Spec.Name.GetTag(),
+			MetaName:   img.Name,
+			Size:       img.Spec.DetailInfo.Size,
+			CreateTime: img.Spec.DetailInfo.CreateTime,
 		})
 	}
 	repo.Status.Tags = tagList
 	sort.Slice(repo.Status.Tags, func(i, j int) bool {
-		return repo.Status.Tags[i].CTime.After(repo.Status.Tags[j].CTime.Time)
+		return repo.Status.Tags[i].CreateTime.After(repo.Status.Tags[j].CreateTime.Time)
 	})
 	if len(repo.Status.Tags) != 0 {
-		repo.Status.LatestTag = &repo.Status.Tags[len(repo.Status.Tags)-1]
+		repo.Status.LatestTag = &repo.Status.Tags[0]
 	} else {
 		// set LatestTag nil if no tag in repo.
 		repo.Status.LatestTag = nil
@@ -141,7 +141,7 @@ func (r *RepositoryReconciler) reconcile(ctx context.Context, obj client.Object)
 	return ctrl.Result{}, nil
 }
 
-func (r *RepositoryReconciler) doFinalizer(ctx context.Context, obj client.Object) error {
+func (r *RepositoryReconciler) doFinalizer(_ context.Context, _ client.Object) error {
 	return nil
 }
 

@@ -21,24 +21,34 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/labring/sealos/controllers/cluster/common"
+
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 
 	"github.com/labring/sealos/controllers/cluster/utils"
 
 	"github.com/go-logr/logr"
 
+	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/ratelimiter"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	v1 "github.com/labring/sealos/controllers/cluster/api/v1"
 	infrav1 "github.com/labring/sealos/controllers/infra/api/v1"
 	infracommon "github.com/labring/sealos/controllers/infra/common"
-	"github.com/labring/sealos/controllers/infra/drivers"
 	"github.com/labring/sealos/pkg/ssh"
 	"github.com/labring/sealos/pkg/types/v1beta1"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -49,12 +59,15 @@ import (
 const (
 	defaultUser            = "root"
 	defaultSealosVersion   = "4.1.4"
+	defaultSealosArch      = "amd64"
 	defaultWorkDir         = "/root/.sealos"
+	defaultClusterName     = "default"
 	defaultClusterFileName = "Clusterfile"
 )
 const (
 	applyClusterfileCmd = "sealos apply -f /root/Clusterfile"
-	downloadSealosCmd   = `sealos version || wget  https://ghproxy.com/https://github.com/labring/sealos/releases/download/v%[1]s/sealos_%[1]s_linux_amd64.tar.gz  && tar -zxvf sealos_%[1]s_linux_amd64.tar.gz sealos &&  chmod +x sealos && mv sealos /usr/bin`
+	sealosVersionCmd    = "sealos version --short"
+	downloadSealosCmd   = `wget  https://ghproxy.com/https://github.com/labring/sealos/releases/download/v%[1]s/sealos_%[1]s_linux_%[2]s.tar.gz  && tar -zxvf sealos_%[1]s_linux_%[2]s.tar.gz sealos &&  chmod +x sealos && mv sealos /usr/bin`
 	getClusterfileCmd   = "cat %s"
 )
 
@@ -64,15 +77,20 @@ var errClusterFileNotExists = errors.New("get clusterfile on master failed").Err
 type ClusterReconciler struct {
 	client.Client
 	logr.Logger
-	driver   drivers.Driver
 	Scheme   *runtime.Scheme
 	recorder record.EventRecorder
+}
+
+type ClusterReconcilerOptions struct {
+	MaxConcurrentReconciles int
+	RateLimiter             ratelimiter.RateLimiter
 }
 
 //+kubebuilder:rbac:groups=cluster.sealos.io,resources=clusters,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=cluster.sealos.io,resources=clusters/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=cluster.sealos.io,resources=clusters/finalizers,verbs=update
 //+kubebuilder:rbac:groups=infra.sealos.io,resources=infras,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=infra.sealos.io,resources=infras/status,verbs=get;update;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -88,6 +106,10 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if err := r.Get(ctx, req.NamespacedName, cluster); err != nil {
 		r.recorder.Event(cluster, corev1.EventTypeWarning, "GetCluster", err.Error())
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	if cluster.Status.Status == v1.Failed.String() {
+		return ctrl.Result{}, nil
 	}
 
 	infra := &infrav1.Infra{}
@@ -110,49 +132,49 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{RequeueAfter: time.Second * 5}, nil
 	}
 
-	EIP, err := getMaster0PublicIP(infra)
+	EIP, err := r.getMaster0PublicIP(infra)
+	r.Logger.Info("get master0 public ip", "ip", EIP)
 	if err != nil {
 		r.Logger.Error(err, "Failed to get master0 ip")
 		return ctrl.Result{RequeueAfter: time.Second * 30}, nil
 	}
 
-	currentCluster, err := getMasterClusterfile(c, cluster, EIP)
+	currentCluster, err := getMasterClusterfile(c, EIP)
 	if err != nil && err.Error() != errClusterFileNotExists {
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: time.Second * 5}, nil
 	}
 
+	// generate new clusterfile
+	var newClusterFile string
 	if err != nil && err.Error() == errClusterFileNotExists {
 		newCluster := generateClusterFromInfra(infra, cluster)
-		newClusterFile, err := convertClusterToYaml(newCluster)
+		newClusterFile, err = convertClusterToYaml(newCluster)
 		if err != nil {
 			r.recorder.Event(cluster, corev1.EventTypeWarning, "GenerateClusterfile", "generate clusterfile failed")
-			return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 60}, err
-		}
-
-		if err := applyClusterfile(c, EIP, newClusterFile, getSealosVersion(cluster)); err != nil {
-			r.recorder.Event(cluster, corev1.EventTypeWarning, "ApplyClusterfile", "apply clusterfile failed")
 			return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 60}, err
 		}
 	} else {
 		desiredCluster := generateClusterFromInfra(infra, cluster)
 		newCluster := mergeCluster(currentCluster, desiredCluster)
-		newClusterFile, err := convertClusterToYaml(newCluster)
-		r.Logger.Info("new clusterfile", "clusterfile: ", newClusterFile)
-
+		newClusterFile, err = convertClusterToYaml(newCluster)
 		if err != nil {
 			r.recorder.Event(cluster, corev1.EventTypeWarning, "GenerateClusterfile", err.Error())
 			return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 60}, err
 		}
+	}
 
-		if err := applyClusterfile(c, EIP, newClusterFile, getSealosVersion(cluster)); err != nil {
-			r.recorder.Event(cluster, corev1.EventTypeWarning, "ApplyClusterfile", err.Error())
-			return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 60}, err
+	// apply new clusterfile
+	if err := applyClusterfile(c, EIP, newClusterFile, getSealosVersion(cluster), getSealosArch(infra)); err != nil {
+		r.recorder.Event(cluster, corev1.EventTypeWarning, "ApplyClusterfile", err.Error())
+		if err := r.updateStatus(ctx, client.ObjectKeyFromObject(cluster), v1.Failed.String()); err != nil {
+			r.recorder.Event(cluster, corev1.EventTypeWarning, "UpdateClusterStatus", err.Error())
+			return ctrl.Result{}, err
 		}
+		return ctrl.Result{}, err
 	}
 
 	// update cluster status
-	cluster.Status.Status = v1.Running.String()
-	if err := r.Status().Update(ctx, cluster); err != nil {
+	if err := r.updateStatus(ctx, client.ObjectKeyFromObject(cluster), v1.Running.String()); err != nil {
 		r.recorder.Event(cluster, corev1.EventTypeWarning, "UpdateClusterStatus", err.Error())
 		return ctrl.Result{}, err
 	}
@@ -172,10 +194,11 @@ func getPrivateIP(meta infrav1.Metadata) string {
 
 // Generate Clusterfile by infra and cluster
 func generateClusterFromInfra(infra *infrav1.Infra, cluster *v1.Cluster) *v1.Cluster {
-	new := cluster.DeepCopy()
-	new.CreationTimestamp = metav1.Time{}
-	new.Spec.SSH = infra.Spec.SSH
-	new.Spec.SSH.User = defaultUser
+	newCluster := cluster.DeepCopy()
+	newCluster.Name = defaultClusterName
+	newCluster.CreationTimestamp = metav1.Time{}
+	newCluster.Spec.SSH = infra.Spec.SSH
+	newCluster.Spec.SSH.User = defaultUser
 
 	for _, host := range infra.Spec.Hosts {
 		for _, meta := range host.Metadata {
@@ -184,25 +207,24 @@ func generateClusterFromInfra(infra *infrav1.Infra, cluster *v1.Cluster) *v1.Clu
 				continue
 			}
 
-			new.Spec.Hosts = append(new.Spec.Hosts, v1beta1.Host{
+			newCluster.Spec.Hosts = append(newCluster.Spec.Hosts, v1beta1.Host{
 				IPS:   []string{privateIP},
 				Roles: host.Roles,
 			})
 		}
 	}
-	return new
+	return newCluster
 }
 
 // merge current cluster to new cluster
-func mergeCluster(currentCluster *v1beta1.Cluster, desiredCluster *v1.Cluster) *v1beta1.Cluster {
-	new := currentCluster.DeepCopy()
+func mergeCluster(currentCluster *v1.Cluster, desiredCluster *v1.Cluster) *v1.Cluster {
+	newCluster := currentCluster.DeepCopy()
 	hosts := desiredCluster.Spec.Hosts
-	new.Spec.Hosts = hosts
-	return new
+	newCluster.Spec.Hosts = hosts
+	return newCluster
 }
 
 func convertClusterToYaml(cluster interface{}) (string, error) {
-	// convert cluster to yaml
 	newClusterfile, err := yaml.Marshal(cluster)
 	if err != nil {
 		return "", fmt.Errorf("marshal cluster to yaml failed: %v", err)
@@ -212,17 +234,36 @@ func convertClusterToYaml(cluster interface{}) (string, error) {
 }
 
 // Get master0 public ip from infra
-func getMaster0PublicIP(infra *infrav1.Infra) (string, error) {
-	for _, host := range infra.Spec.Hosts {
-		for _, meta := range host.Metadata {
-			for _, ip := range meta.IP {
-				if ip.IPType == infracommon.IPTypePublic && host.Roles[0] == v1beta1.MASTER {
-					return ip.IPValue, nil
+func (r *ClusterReconciler) getMaster0PublicIP(infra *infrav1.Infra) (string, error) {
+	for i := range infra.Spec.Hosts {
+		host := &infra.Spec.Hosts[i]
+		for j := range host.Metadata {
+			meta := &host.Metadata[j]
+			if _, ok := meta.Labels[common.Master0Label]; ok {
+				moveToHead(host, j)
+				if ip := getPublicIP(host.Metadata[0]); ip != "" {
+					return ip, nil
 				}
 			}
 		}
 	}
 	return "", fmt.Errorf("get master0 ip failed")
+}
+
+func getPublicIP(meta infrav1.Metadata) string {
+	for _, ip := range meta.IP {
+		if ip.IPType == infracommon.IPTypePublic {
+			return ip.IPValue
+		}
+	}
+	return ""
+}
+
+func moveToHead(host *infrav1.Hosts, i int) {
+	if i == 0 {
+		return
+	}
+	host.Metadata[0], host.Metadata[i] = host.Metadata[i], host.Metadata[0]
 }
 
 func getAllInstanceIP(infra *infrav1.Infra) []string {
@@ -241,10 +282,20 @@ func getAllInstanceIP(infra *infrav1.Infra) []string {
 
 // get sealos version from cluster
 func getSealosVersion(cluster *v1.Cluster) string {
-	if v, ok := cluster.Annotations["sealos.io/sealos/version"]; ok && v != "" {
+	if v, ok := cluster.Annotations["sealos.io/version"]; ok && v != "" {
 		return v
 	}
 	return defaultSealosVersion
+}
+
+// get sealos arch from infra
+func getSealosArch(infra *infrav1.Infra) string {
+	for _, host := range infra.Spec.Hosts {
+		if host.Roles[0] == v1beta1.MASTER {
+			return host.Arch
+		}
+	}
+	return defaultSealosArch
 }
 
 func waitAllInstanceSSHReady(c ssh.Interface, ips []string) error {
@@ -267,28 +318,60 @@ func getSSHclient(infra *infrav1.Infra) ssh.Interface {
 }
 
 // Apply clusterfile on infra
-func applyClusterfile(c ssh.Interface, EIP, clusterfile, sealosVersion string) error {
+func applyClusterfile(c ssh.Interface, EIP, clusterfile, sealosVersion string, sealosArch string) error {
 	createClusterfile := fmt.Sprintf(`tee /root/Clusterfile <<EOF
 %s
 EOF`, clusterfile)
-	downloadSealos := fmt.Sprintf(downloadSealosCmd, sealosVersion)
 
-	cmds := []string{createClusterfile, downloadSealos, applyClusterfileCmd}
-	if err := c.CmdAsync(EIP, cmds...); err != nil {
-		return fmt.Errorf("write clusterfile to remote failed: %v", err)
+	// check sealos version
+	out, err := c.Cmd(EIP, sealosVersionCmd)
+	downloadSealos := fmt.Sprintf(downloadSealosCmd, sealosVersion, sealosArch)
+	if err == nil {
+		currentVersion, err2 := parseSealosVersion(out)
+		if err2 != nil {
+			return fmt.Errorf("parse sealos version failed: %v", err2)
+		}
+		if *currentVersion != sealosVersion {
+			if err = c.CmdAsync(EIP, downloadSealos); err != nil {
+				return fmt.Errorf("download sealos failed: %v", err)
+			}
+		}
+	} else {
+		if err = c.CmdAsync(EIP, downloadSealos); err != nil {
+			return fmt.Errorf("download sealos failed: %v", err)
+		}
 	}
 
+	if err = c.CmdAsync(EIP, createClusterfile); err != nil {
+		return fmt.Errorf("create clusterfile failed: %v", err)
+	}
+	if err = c.CmdAsync(EIP, applyClusterfileCmd); err != nil {
+		return fmt.Errorf("apply clusterfile failed: %v", err)
+	}
 	return nil
 }
 
-func getMasterClusterfile(c ssh.Interface, cluster *v1.Cluster, EIP string) (*v1beta1.Cluster, error) {
-	path := filepath.Join(defaultWorkDir, cluster.Name, defaultClusterFileName)
+func parseSealosVersion(out []byte) (*string, error) {
+	str := string(out[:])
+	strs := strings.Split(str, "-")
+	if len(strs) < 2 {
+		return nil, fmt.Errorf("sealos version is not correct: %v", str)
+	}
+	var version string
+	for i := 0; i < len(strs)-1; i++ {
+		version += strs[i]
+	}
+	return &version, nil
+}
+
+func getMasterClusterfile(c ssh.Interface, EIP string) (*v1.Cluster, error) {
+	path := filepath.Join(defaultWorkDir, defaultClusterName, defaultClusterFileName)
 	cmd := fmt.Sprintf(getClusterfileCmd, path)
 	out, err := c.Cmd(EIP, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("get clusterfile on master failed")
 	}
-	currentCluster := &v1beta1.Cluster{}
+	currentCluster := &v1.Cluster{}
 	err = yaml.Unmarshal(out, currentCluster)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshall yaml failed: %v", err)
@@ -296,20 +379,30 @@ func getMasterClusterfile(c ssh.Interface, cluster *v1.Cluster, EIP string) (*v1
 	return currentCluster, nil
 }
 
+func (r *ClusterReconciler) updateStatus(ctx context.Context, nn types.NamespacedName, status string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		original := &v1.Cluster{}
+		if err := r.Get(ctx, nn, original); err != nil {
+			return err
+		}
+		original.Status.Status = status
+		return r.Status().Update(ctx, original)
+	})
+}
+
 // SetupWithManager sets up the controller with the Manager.
-func (r *ClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *ClusterReconciler) SetupWithManager(mgr ctrl.Manager, opts ClusterReconcilerOptions) error {
 	const controllerName = "cluster_controller"
 	r.Logger = ctrl.Log.WithName(controllerName)
-	driver, err := drivers.NewDriver()
-
-	if err != nil {
-		return fmt.Errorf("cluster controller new driver failed: %v", err)
-	}
-	r.driver = driver
 	r.recorder = mgr.GetEventRecorderFor("sealos-cluster-controller")
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1.Cluster{}).
+		For(&v1.Cluster{}, builder.WithPredicates(
+			predicate.Or(predicate.GenerationChangedPredicate{}))).
 		Watches(&source.Kind{Type: &infrav1.Infra{}}, &handler.EnqueueRequestForObject{}).
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: opts.MaxConcurrentReconciles,
+			RateLimiter:             opts.RateLimiter,
+		}).
 		Complete(r)
 }

@@ -17,22 +17,24 @@ limitations under the License.
 package checker
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
-	"github.com/labring/sealos/pkg/template"
-	"github.com/labring/sealos/pkg/utils/iputils"
+	"github.com/docker/docker/api/types"
 
-	"github.com/pkg/errors"
+	"github.com/labring/sealos/pkg/registry"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/labring/sealos/pkg/bootstrap"
 	"github.com/labring/sealos/pkg/constants"
 	"github.com/labring/sealos/pkg/ssh"
+	"github.com/labring/sealos/pkg/template"
 	v2 "github.com/labring/sealos/pkg/types/v1beta1"
 	fileutil "github.com/labring/sealos/pkg/utils/file"
+	"github.com/labring/sealos/pkg/utils/iputils"
 	"github.com/labring/sealos/pkg/utils/logger"
-	"github.com/labring/sealos/pkg/utils/registry"
 	"github.com/labring/sealos/pkg/utils/yaml"
 )
 
@@ -70,7 +72,7 @@ func (n *RegistryChecker) Check(cluster *v2.Cluster, phase string) error {
 
 	registryConfig := "/etc/registry/registry_config.yml"
 	if cfg, err := fileutil.ReadAll(registryConfig); err != nil {
-		status.Error = errors.Wrap(err, "read registry config error").Error()
+		status.Error = fmt.Errorf("read registry config error: %w", err).Error()
 	} else {
 		cfgMap, _ := yaml.UnmarshalData(cfg)
 		status.Port, _, _ = unstructured.NestedString(cfgMap, "http", "addr")
@@ -86,23 +88,23 @@ func (n *RegistryChecker) Check(cluster *v2.Cluster, phase string) error {
 
 	sshCtx, err := ssh.NewSSHByCluster(cluster, false)
 	if err != nil {
-		status.Error = errors.Wrap(err, "get ssh interface error").Error()
+		status.Error = fmt.Errorf("get ssh interface error: %w", err).Error()
 		return nil
 	}
 	root := constants.NewData(cluster.Name).RootFSPath()
 	regInfo := bootstrap.GetRegistryInfo(sshCtx, root, cluster.GetRegistryIPAndPort())
 	status.Auth = fmt.Sprintf("%s:%s", regInfo.Username, regInfo.Password)
 	status.RegistryDomain = fmt.Sprintf("%s:%s", regInfo.Domain, regInfo.Port)
-	regInterface, err := registry.NewRegistryForDomain(status.RegistryDomain, regInfo.Username, regInfo.Password)
+	cfg := types.AuthConfig{
+		Username: regInfo.Username,
+		Password: regInfo.Password,
+	}
+	_, err = registry.NewRegistry(status.RegistryDomain, cfg)
 	if err != nil {
-		status.Error = errors.Wrap(err, "get registry interface error").Error()
+		status.Error = fmt.Errorf("get registry interface error: %w", err).Error()
 		return nil
 	}
-	if err = regInterface.Ping(); err != nil {
-		status.Ping = fmt.Sprintf("error: %+v", err)
-	} else {
-		status.Ping = "ok"
-	}
+	status.Ping = "ok"
 	status.Error = Nil
 	return nil
 }
@@ -127,10 +129,7 @@ func (n *RegistryChecker) Output(status *RegistryStatus) error {
 		}
 		return errors.New("convert registry template failed")
 	}
-	if err = tpl.Execute(os.Stdout, status); err != nil {
-		return err
-	}
-	return nil
+	return tpl.Execute(os.Stdout, status)
 }
 
 func NewRegistryChecker() Interface {

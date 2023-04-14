@@ -2,29 +2,30 @@ package api
 
 import (
 	"fmt"
-	userv1 "github.com/labring/sealos/controllers/user/api/v1"
-	baseapi "github.com/labring/sealos/test/testdata/api"
 	"time"
+
+	accountv1 "github.com/labring/sealos/controllers/account/api/v1"
+	baseapi "github.com/labring/sealos/test/testdata/api"
 )
 
 const AccountBalanceYaml = `
-apiVersion: user.sealos.io/v1
+apiVersion: account.sealos.io/v1
 kind: AccountBalance
 metadata:
   name: ${name}
   namespace: ${namespace}
 `
 
-func GetAccountBalance(namespace string, name string) (*userv1.AccountBalance, error) {
-	gvr := userv1.GroupVersion.WithResource("accountbalances")
-	var accountbalance userv1.AccountBalance
+func GetAccountBalance(namespace string, name string) (*accountv1.AccountBalance, error) {
+	gvr := accountv1.GroupVersion.WithResource("accountbalances")
+	var accountbalance accountv1.AccountBalance
 	if err := baseapi.GetObject(namespace, name, gvr, &accountbalance); err != nil {
 		return nil, err
 	}
 	return &accountbalance, nil
 }
 
-func EnsureAccountBalanceCreate(namespace string, name string, times int) (*userv1.AccountBalance, error) {
+func EnsureAccountBalanceCreate(namespace string, name string, times int) (*accountv1.AccountBalance, error) {
 	time.Sleep(time.Second)
 	for i := 1; i <= times; i++ {
 		accountBalance, err := GetAccountBalance(namespace, name)
@@ -37,5 +38,5 @@ func EnsureAccountBalanceCreate(namespace string, name string, times int) (*user
 		}
 		time.Sleep(time.Second)
 	}
-	return nil, fmt.Errorf("accountbalance get faile")
+	return nil, fmt.Errorf("accountbalance get fail")
 }

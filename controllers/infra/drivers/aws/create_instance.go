@@ -25,8 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/config"
-
 	"github.com/labring/sealos/pkg/utils/logger"
 
 	"github.com/google/uuid"
@@ -43,8 +41,11 @@ var mutex sync.Mutex
 
 var userData = `#!/bin/bash
 sudo cp /home/ec2-user/.ssh/authorized_keys /root/.ssh/authorized_keys
-sudo sed -i 's/#PermitRootLogin no/PermitRootLogin yes/g' /etc/ssh/sshd_config
+sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config
+sudo sed -ie "s/no-port-for.*exit 142\" //g" /root/.ssh/authorized_keys
 `
+
+const defaultAvailabilityZone = "cn-north-1b"
 
 // EC2CreateInstanceAPI defines the interface for the RunInstances and CreateTags functions.
 // We use this interface to test the functions using a mocked service.
@@ -170,28 +171,24 @@ func (d Driver) GetTags(hosts *v1.Hosts, infra *v1.Infra) []types.Tag {
 	return tags
 }
 
-// get instace data by id
-func getInstancesByID(id *string, client *ec2.Client) ([]types.Reservation, error) {
-	uidKey := fmt.Sprintf("tag:%s", common.InfraInstancesUUID)
-	statusName := common.InstanceState
-	status := types.InstanceStateNameRunning
-	input := &ec2.DescribeInstancesInput{
-		Filters: []types.Filter{
-			{
-				Name:   &uidKey,
-				Values: []string{*id},
-			},
-			{
-				Name:   &statusName,
-				Values: []string{string(status)},
-			},
-		},
-	}
-	result, err := GetInstances(context.TODO(), client, input)
-	if err != nil || len(result.Reservations) == 0 || len(result.Reservations[0].Instances) == 0 {
-		return nil, fmt.Errorf("got an error retrieving information about your Amazon EC2 instances: %v", err)
-	}
-	return result.Reservations, nil
+// GetVolumeTags get tags
+func (d Driver) GetVolumeTags(hosts *v1.Hosts, infra *v1.Infra) []types.Tag {
+	// Set role tag
+	tags := rolesToTags(hosts.Roles)
+	// Set label tag
+	labelKey := common.InfraInstancesLabel
+	labelValue := infra.GetInstancesAndVolumesTag()
+	// Set infra uid tag
+	uidKey := common.InfraInstancesUUID
+	uidValue := string(infra.GetUID())
+	tags = append(tags, types.Tag{
+		Key:   &labelKey,
+		Value: &labelValue,
+	}, types.Tag{
+		Key:   &uidKey,
+		Value: &uidValue,
+	})
+	return tags
 }
 
 // GetBlockDeviceMappings generate blockDeviceMappings from hosts
@@ -246,9 +243,11 @@ func (d Driver) createInstances(hosts *v1.Hosts, infra *v1.Infra) error {
 		return nil
 	}
 	tags := d.GetTags(hosts, infra)
-	roleTags := rolesToTags(hosts.Roles)
+	volumeTags := d.GetVolumeTags(hosts, infra)
 	keyName := infra.Spec.SSH.PkName
-	availabilityZone := infra.Spec.AvailabilityZone
+	if infra.Spec.AvailabilityZone == "" {
+		infra.Spec.AvailabilityZone = defaultAvailabilityZone
+	}
 	// todo use ami to search root device name
 
 	// encode userdata to base64
@@ -272,14 +271,14 @@ func (d Driver) createInstances(hosts *v1.Hosts, infra *v1.Infra) error {
 			},
 			{
 				ResourceType: types.ResourceTypeVolume,
-				Tags:         roleTags,
+				Tags:         volumeTags,
 			},
 		},
 		KeyName:             &keyName,
 		SecurityGroupIds:    []string{"sg-0476ffedb5ca3f816"},
 		BlockDeviceMappings: bdms,
 		Placement: &types.Placement{
-			AvailabilityZone: &availabilityZone,
+			AvailabilityZone: &infra.Spec.AvailabilityZone,
 		},
 		UserData: &userData,
 	}
@@ -295,65 +294,13 @@ func (d Driver) createInstances(hosts *v1.Hosts, infra *v1.Infra) error {
 	//}
 	result, err := MakeInstance(context.TODO(), client, input)
 	if err != nil {
-		return fmt.Errorf("create volume failed: %v", err)
+		return fmt.Errorf("create instance failed: %v", err)
 	}
 
 	if err := d.WaitInstanceRunning(result.Instances); err != nil {
 		return fmt.Errorf("create instance and wait instance running failed: %v", err)
 	}
 
-	//set tag to volume
-	diskIndex := 0
-	//get BlockDeviceMapping
-	id := string(infra.UID)
-	reservations, err := getInstancesByID(&id, d.Client)
-	if err != nil {
-		return fmt.Errorf("get instance failed: %v", err)
-	}
-	for _, reservation := range reservations {
-		for _, curInstance := range reservation.Instances {
-			diskIndex = 0
-			for _, blockDeviceMap := range curInstance.BlockDeviceMappings {
-				logger.Info("curinstance id is %v", *curInstance.InstanceId)
-				vid := blockDeviceMap.Ebs.VolumeId
-				logger.Info("volumeId is %v", vid)
-				indexKey, indexValue := common.InfraVolumeIndex, strconv.Itoa(diskIndex)
-				infraIDKey, infraIDValue := common.VolumeInfraID, curInstance.InstanceId
-				typeKey := common.DataVolumeLabel
-				if *blockDeviceMap.DeviceName == rootDeviceName {
-					typeKey = common.RootVolumeLabel
-				}
-				typeValue := common.TRUELable
-				volumeTags := []types.Tag{
-					{
-						Key:   &infraIDKey,
-						Value: infraIDValue,
-					}, {
-						Key:   &indexKey,
-						Value: &indexValue,
-					}, {
-						Key:   &typeKey,
-						Value: &typeValue,
-					},
-				}
-				input := &ec2.CreateTagsInput{
-					Resources: []string{*vid},
-					Tags:      volumeTags,
-				}
-				if _, err := MakeTags(context.TODO(), client, input); err != nil {
-					return fmt.Errorf("create volume tags failed: %v", err)
-				}
-				diskIndex++
-			}
-		}
-	}
-
-	//if infra.Spec.AvailabilityZone == "" && len(result.Instances) > 0 {
-	//	infra.Spec.AvailabilityZone = *result.Instances[0].Placement.AvailabilityZone
-	//}
-	if len(result.Instances) > 0 {
-		logger.Info("%v availabilityZone is %v", *result.Instances[0].InstanceId, *result.Instances[0].Placement.AvailabilityZone)
-	}
 	//err = d.createAndAttachVolumes(infra, hosts, hosts.Disks)
 	//if err != nil {
 	//	return fmt.Errorf("create and attach volumes failed: %v", err)
@@ -376,7 +323,7 @@ func (d Driver) WaitInstanceRunning(instances []types.Instance) error {
 }
 
 func (d Driver) CreateKeyPair(infra *v1.Infra) error {
-	if infra.Spec.SSH.PkData != "" {
+	if infra.Spec.SSH.PkName != "" {
 		return nil
 	}
 
@@ -388,9 +335,22 @@ func (d Driver) CreateKeyPair(infra *v1.Infra) error {
 		return fmt.Errorf("create uuid error:%v", err)
 	}
 	keyName := myUUID.String()
+	keypairKey, keypairValue := common.KeyPairUser, infra.GetInstancesAndVolumesTag()
+	keyTags := []types.Tag{
+		{
+			Key:   &keypairKey,
+			Value: &keypairValue,
+		},
+	}
 	input := &ec2.CreateKeyPairInput{
 		KeyName:   &keyName,
 		KeyFormat: types.KeyFormatPem,
+		TagSpecifications: []types.TagSpecification{
+			{
+				ResourceType: types.ResourceTypeKeyPair,
+				Tags:         keyTags,
+			},
+		},
 	}
 
 	result, err := MakeKeyPair(context.TODO(), client, input)
@@ -400,31 +360,5 @@ func (d Driver) CreateKeyPair(infra *v1.Infra) error {
 	infra.Spec.SSH.PkName = *result.KeyName
 	infra.Spec.SSH.PkData = *result.KeyMaterial
 	logger.Info("create key pair success", "keyName", *result.KeyName)
-	return nil
-}
-
-// list all aws key pair
-func ListAndDeleteKeyPair() error {
-	config, err := config.LoadDefaultConfig(context.TODO())
-	if err != nil {
-		return fmt.Errorf("load default config failed %s", err)
-	}
-	client := ec2.NewFromConfig(config)
-
-	input := &ec2.DescribeKeyPairsInput{}
-	result, err := client.DescribeKeyPairs(context.TODO(), input)
-	if err != nil {
-		return fmt.Errorf("list key pair error:%v", err)
-	}
-	for _, v := range result.KeyPairs {
-		// delete aws key pair by name
-		input := &ec2.DeleteKeyPairInput{
-			KeyName: v.KeyName,
-		}
-		_, err := client.DeleteKeyPair(context.TODO(), input)
-		if err != nil {
-			return fmt.Errorf("delete key pair error:%v", err)
-		}
-	}
 	return nil
 }

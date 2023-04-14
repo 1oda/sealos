@@ -15,6 +15,8 @@
 package cmd
 
 import (
+	"errors"
+
 	"github.com/spf13/cobra"
 
 	"github.com/labring/sealos/pkg/apply"
@@ -40,6 +42,9 @@ func newResetCmd() *cobra.Command {
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := processor.ConfirmDeleteNodes(); err != nil {
+				if errors.Is(err, processor.ErrCancelled) {
+					return nil
+				}
 				return err
 			}
 			applier, err := apply.NewApplierFromResetArgs(resetArgs)
@@ -55,8 +60,4 @@ func newResetCmd() *cobra.Command {
 	resetArgs.RegisterFlags(resetCmd.Flags())
 	resetCmd.Flags().BoolVar(&processor.ForceDelete, "force", false, "we also can input an --force flag to reset cluster by force")
 	return resetCmd
-}
-
-func init() {
-	rootCmd.AddCommand(newResetCmd())
 }

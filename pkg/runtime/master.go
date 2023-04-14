@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"sync"
 
 	"github.com/labring/sealos/pkg/constants"
 	"github.com/labring/sealos/pkg/ssh"
@@ -26,18 +25,13 @@ import (
 	"github.com/labring/sealos/pkg/utils/logger"
 	"github.com/labring/sealos/pkg/utils/strings"
 
-	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 )
 
 func (k *KubeadmRuntime) InitMaster0() error {
 	logger.Info("start to init master0...")
 
-	err := k.registryAuth(k.getMaster0IPAndPort())
-	if err != nil {
-		return err
-	}
-	err = k.execHostsAppend(k.getMaster0IPAndPort(), k.getMaster0IP(), k.getAPIServerDomain())
+	err := k.execHostsAppend(k.getMaster0IPAndPort(), k.getMaster0IP(), k.getAPIServerDomain())
 	if err != nil {
 		return fmt.Errorf("add apiserver domain hosts failed %v", err)
 	}
@@ -50,16 +44,11 @@ func (k *KubeadmRuntime) InitMaster0() error {
 	if err != nil {
 		return fmt.Errorf("init master0 failed, error: %s. Please clean and reinstall", err.Error())
 	}
-	err = k.copyMasterKubeConfig(k.getMaster0IPAndPort())
-	if err != nil {
-		return err
-	}
-	return nil
+	return k.copyMasterKubeConfig(k.getMaster0IPAndPort())
 }
 
 // sendJoinCPConfig send join CP masters configuration
 func (k *KubeadmRuntime) sendJoinCPConfig(joinMaster []string) error {
-	k.Mutex = &sync.Mutex{}
 	eg, _ := errgroup.WithContext(context.Background())
 	for _, master := range joinMaster {
 		master := master
@@ -98,7 +87,7 @@ func (k *KubeadmRuntime) joinMasters(masters []string) error {
 	logger.Info("start to init filesystem join masters...")
 	var err error
 	if err = ssh.WaitSSHReady(k.getSSHInterface(), 6, masters...); err != nil {
-		return errors.Wrap(err, "join masters wait for ssh ready time out")
+		return fmt.Errorf("join masters wait for ssh ready time out: %w", err)
 	}
 
 	if err = k.CopyStaticFiles(masters); err != nil {
@@ -118,17 +107,15 @@ func (k *KubeadmRuntime) joinMasters(masters []string) error {
 	if err = k.sendJoinCPConfig(masters); err != nil {
 		return err
 	}
+	if err = k.fetchKubeadmConfig(); err != nil {
+		return err
+	}
 	cmd := k.Command(k.getKubeVersion(), JoinMaster)
 	if cmd == "" {
 		return fmt.Errorf("get join master command failed, kubernetes version is %s", k.getKubeVersion())
 	}
 	for _, master := range masters {
 		logger.Info("start to join %s as master", master)
-		err = k.registryAuth(master)
-		if err != nil {
-			return err
-		}
-
 		logger.Info("start to generator cert %s as master", master)
 		err = k.execCert(master)
 		if err != nil {
@@ -184,16 +171,13 @@ func (k *KubeadmRuntime) deleteMasters(masters []string) error {
 }
 
 func (k *KubeadmRuntime) deleteMaster(master string) error {
-	//remove master
-	masterIPs := strings.SliceRemoveStr(k.getMasterIPList(), master)
-	if len(masterIPs) > 0 {
-		if err := k.deleteKubeNode(master); err != nil {
-			return fmt.Errorf("delete master %s failed %v", master, err)
+	return k.resetNode(master, func() {
+		//remove master
+		masterIPs := strings.SliceRemoveStr(k.getMasterIPList(), master)
+		if len(masterIPs) > 0 {
+			if err := k.RemoveNodeFromK8sClient(master); err != nil {
+				logger.Warn(fmt.Errorf("delete master %s failed %v", master, err))
+			}
 		}
-	}
-
-	if err := k.resetNode(master); err != nil {
-		return err
-	}
-	return nil
+	})
 }

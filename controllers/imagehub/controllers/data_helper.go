@@ -14,7 +14,7 @@ type DataHelper struct {
 	logr.Logger
 }
 
-var ErrNotMatch = errors.New("NotMatch")
+var ErrNotMatch = errors.New("notMatch")
 
 type MatchingLabelsModifier func(name any, labels client.MatchingLabels)
 
@@ -41,7 +41,7 @@ func listByLable[R client.ObjectList](ctx context.Context, r *DataHelper, result
 }
 
 // todo add org info and edit this!
-func (r *DataHelper) getOrgInfoByOrgName(ctx context.Context, name imagehubv1.OrgName) (imagehubv1.OrgInfo, error) {
+func (r *DataHelper) getOrgInfoByOrgName(_ context.Context, _ imagehubv1.OrgName) (imagehubv1.OrgInfo, error) {
 	return imagehubv1.OrgInfo{}, nil
 }
 

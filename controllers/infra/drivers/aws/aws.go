@@ -19,7 +19,6 @@ package aws
 import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	v1 "github.com/labring/sealos/controllers/infra/api/v1"
 )
 
@@ -28,7 +27,7 @@ type Driver struct {
 	Client *ec2.Client
 }
 
-func (d Driver) GetInstances(infra *v1.Infra, status types.InstanceStateName) ([]v1.Hosts, error) {
+func (d Driver) GetInstances(infra *v1.Infra, status string) ([]v1.Hosts, error) {
 	return d.getInstances(infra, status)
 }
 
@@ -43,7 +42,7 @@ func (d Driver) StopInstances(hosts *v1.Hosts) error {
 func (d Driver) ModifyInstances(curHosts *v1.Hosts, desHosts *v1.Hosts) error {
 	return d.modifyInstances(curHosts, desHosts)
 }
-func (d Driver) DeleteInstanceByID(instanceID string, infra *v1.Infra) error {
+func (d Driver) DeleteInstanceByID(_ string, _ *v1.Infra) error {
 	//TODO implement me
 	panic("implement me")
 }
@@ -65,9 +64,13 @@ func (d Driver) DeleteVolume(disksID []string) error {
 }
 
 func (d Driver) ModifyVolume(curDisk *v1.Disk, desDisk *v1.Disk) error {
-	return d.modifyVolume(curDisk, desDisk)
+	return d.modifyVolumes(curDisk, desDisk)
 }
 
 func (d Driver) DeleteKeyPair(infra *v1.Infra) error {
 	return d.deleteKeyPair(infra)
+}
+
+func (d Driver) DeleteInfra(infra *v1.Infra) error {
+	return d.deleteInfra(infra)
 }

@@ -118,6 +118,18 @@ rules:
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
+  - clusterroles
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
   - rolebindings
   verbs:
   - create
@@ -127,70 +139,6 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - accountbalances
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - accounts
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - accounts/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - accounts/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - payments
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - payments/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - user.sealos.io
-  resources:
-  - payments/status
-  verbs:
-  - get
-  - patch
-  - update
 - apiGroups:
   - user.sealos.io
   resources:

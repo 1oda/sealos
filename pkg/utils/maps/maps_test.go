@@ -17,6 +17,7 @@ limitations under the License.
 package maps
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -117,7 +118,7 @@ func TestMergeMap(t *testing.T) {
 	}
 }
 
-func TestStringToMap(t *testing.T) {
+func TestStringToMap(_ *testing.T) {
 	data := StringToMap("address=reg.real-ai.cn,auth=xxx", ",")
-	println(data["address"])
+	fmt.Println(data["address"])
 }

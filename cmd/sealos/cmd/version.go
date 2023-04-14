@@ -16,16 +16,21 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-
-	"github.com/labring/sealos/pkg/constants"
-
-	"github.com/labring/sealos/pkg/version"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"sigs.k8s.io/yaml"
+
+	"github.com/labring/sealos/pkg/clusterfile"
+	"github.com/labring/sealos/pkg/constants"
+	"github.com/labring/sealos/pkg/utils/logger"
+	"github.com/labring/sealos/pkg/version"
 )
 
 var shortPrint bool
+var output string
 
 func newVersionCmd() *cobra.Command {
 	var versionCmd = &cobra.Command{
@@ -34,19 +39,20 @@ func newVersionCmd() *cobra.Command {
 		Args:    cobra.NoArgs,
 		Example: `sealos version`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			marshalled, err := json.Marshal(version.Get())
-			if err != nil {
-				return err
+			//output default to be yaml
+			if output != "yaml" && output != "json" {
+				return errors.New(`--output must be 'yaml' or 'json'`)
 			}
 			if shortPrint {
 				fmt.Println(version.Get().String())
-			} else {
-				fmt.Println(string(marshalled))
+				return nil
 			}
-			return nil
+			return PrintInfo()
 		},
 	}
 	versionCmd.Flags().BoolVar(&shortPrint, "short", false, "if true, print just the version number.")
+	versionCmd.Flags().StringVarP(&output, "output", "o", "yaml", "One of 'yaml' or 'json'")
+	setCommandUnrelatedToBuildah(versionCmd)
 	return versionCmd
 }
 
@@ -56,4 +62,63 @@ func init() {
 
 func getContact() string {
 	return fmt.Sprintf(constants.Contact, version.Get().String())
+}
+
+func PrintInfo() error {
+	OutputInfo := &version.Output{}
+	OutputInfo.SealosVersion = version.Get()
+	cluster, err := clusterfile.GetClusterFromName(clusterName)
+	if err != nil {
+		logger.Debug(err, "fail to find cluster from name")
+		err = PrintToStd(OutputInfo)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	OutputInfo.KubernetesVersion = version.GetKubernetesVersion(cluster)
+	OutputInfo.CriRuntimeVersion = version.GetCriRuntimeVersion()
+
+	err = PrintToStd(OutputInfo)
+	if err != nil {
+		return err
+	}
+	missinfo := []string{}
+	if OutputInfo.KubernetesVersion == nil {
+		missinfo = append(missinfo, "kubernetes version")
+	}
+	if OutputInfo.CriRuntimeVersion == nil {
+		missinfo = append(missinfo, "cri runtime version")
+	}
+	if OutputInfo.KubernetesVersion == nil || OutputInfo.CriRuntimeVersion == nil {
+		fmt.Printf("WARNING: Failed to get %s.\nCheck kubernetes status or use command \"sealos run\" to launch kubernetes\n", strings.Join(missinfo, " and "))
+	}
+
+	return nil
+}
+
+func PrintToStd(OutputInfo *version.Output) error {
+	var (
+		marshalled []byte
+		err        error
+	)
+	switch output {
+	case "yaml":
+		marshalled, err = yaml.Marshal(&OutputInfo)
+		if err != nil {
+			return fmt.Errorf("fail to marshal yaml: %w", err)
+		}
+		fmt.Println(string(marshalled))
+	case "json":
+		marshalled, err = json.Marshal(&OutputInfo)
+		if err != nil {
+			return fmt.Errorf("fail to marshal json: %w", err)
+		}
+		fmt.Println(string(marshalled))
+	default:
+		// There is a bug in the program if we hit this case.
+		// However, we follow a policy of never panicking.
+		return fmt.Errorf("versionOptions were not validated: --output=%q should have been rejected", output)
+	}
+	return nil
 }

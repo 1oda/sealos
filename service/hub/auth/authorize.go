@@ -6,7 +6,7 @@ import (
 	"github.com/cesanta/glog"
 	imagehubv1 "github.com/labring/sealos/controllers/imagehub/api/v1"
 	"github.com/labring/sealos/pkg/client-go/kubernetes"
-	"github.com/labring/service/hub/api"
+	"github.com/labring/sealos/service/hub/api"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -22,33 +22,33 @@ type SealosAuthorize struct {
 
 func (a SealosAuthorize) Authorize(client kubernetes.Client, ai *api.AuthRequestInfo) ([]string, error) {
 	glog.Info("Authorize for req: ", ai.Name)
-	repo := imagehubv1.RepoName(ai.Name)
+
+	repoName := imagehubv1.RepoName(ai.Name)
+	if !repoName.IsLegal() {
+		return nil, api.ErrNoMatch
+	}
+
 	var res []string
-	resource := client.KubernetesDynamic().Resource(schema.GroupVersionResource{
+
+	// get org using authzClient
+	orgResource := client.KubernetesDynamic().Resource(schema.GroupVersionResource{
 		Group:    "imagehub.sealos.io",
 		Version:  "v1",
 		Resource: "organizations",
 	})
-	unstructOrg, err := resource.Get(context.Background(), repo.GetOrg(), metav1.GetOptions{})
+	unstructOrg, err := orgResource.Get(context.Background(), repoName.GetOrg(), metav1.GetOptions{})
 	if err != nil {
-		glog.Infof("error when Authorize req: %s for user %s, get org cr from apiserver error", repo, ai.Account)
-		return res, api.ErrNoMatch
+		glog.Infof("error when Authorize req: %s for user %s, get org cr from apiserver error: %s ", repoName, ai.Account, err)
+		return nil, api.ErrNoMatch
 	}
 	org := imagehubv1.Organization{}
 	err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructOrg.UnstructuredContent(), &org)
 	if err != nil {
 		glog.Infof("error when unstruct organization")
-		return res, api.ErrNoMatch
-	}
-	// if org have repo, user can pull it.
-	for _, r := range org.Status.Repos {
-		if r == repo {
-			res = append(res, "pull")
-			break
-		}
+		return nil, api.ErrNoMatch
 	}
 
-	// if org manager have user, user can push it.
+	// if user is one of the org managers, user can pull and push it.
 	for _, r := range org.Spec.Manager {
 		if r == ai.Account {
 			res = append(res, "pull", "push")
@@ -56,7 +56,36 @@ func (a SealosAuthorize) Authorize(client kubernetes.Client, ai *api.AuthRequest
 		}
 	}
 
-	glog.Info("Authorize true")
+	// return if user is one of the org managers
+	if len(res) != 0 {
+		glog.Info("Authorize true")
+		return res, nil
+	}
+
+	// check repo is public or not
+	// get repo using authzClient
+	repoResource := client.KubernetesDynamic().Resource(schema.GroupVersionResource{
+		Group:    "imagehub.sealos.io",
+		Version:  "v1",
+		Resource: "repositories",
+	})
+	unstructRepo, err := repoResource.Get(context.Background(), repoName.ToMetaName(), metav1.GetOptions{})
+	if err != nil {
+		glog.Infof("error when Authorize req: %s for user %s, get repo cr from apiserver error: %s", repoName, ai.Account, err)
+		return nil, api.ErrNoMatch
+	}
+	repo := imagehubv1.Repository{}
+	err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructRepo.UnstructuredContent(), &repo)
+	if err != nil {
+		glog.Infof("error when unstruct organization")
+		return nil, api.ErrNoMatch
+	}
+
+	// if repo is public, user can pull it anyway.
+	if !repo.Spec.IsPrivate {
+		res = append(res, "pull")
+	}
+
 	return res, nil
 }
 

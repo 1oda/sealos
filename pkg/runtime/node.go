@@ -24,18 +24,20 @@ import (
 	"github.com/labring/sealos/pkg/utils/file"
 	"github.com/labring/sealos/pkg/utils/logger"
 
-	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 )
 
 func (k *KubeadmRuntime) joinNodes(newNodesIPList []string) error {
 	var err error
 	if err = ssh.WaitSSHReady(k.getSSHInterface(), 6, newNodesIPList...); err != nil {
-		return errors.Wrap(err, "join nodes wait for ssh ready time out")
+		return fmt.Errorf("join nodes wait for ssh ready time out: %w", err)
 	}
 
 	masters := k.getMasterIPListAndHTTPSPort()
 	if err = k.setKubernetesToken(); err != nil {
+		return err
+	}
+	if err = k.fetchKubeadmConfig(); err != nil {
 		return err
 	}
 	eg, _ := errgroup.WithContext(context.Background())
@@ -43,10 +45,12 @@ func (k *KubeadmRuntime) joinNodes(newNodesIPList []string) error {
 		node := node
 		eg.Go(func() error {
 			logger.Info("start to join %s as worker", node)
+			k.Lock()
 			err = k.ConfigJoinNodeKubeadmToNode(node)
 			if err != nil {
 				return fmt.Errorf("failed to copy join node kubeadm config %s %v", node, err)
 			}
+			k.Unlock()
 			err = k.execHostsAppend(node, k.getVip(), k.getAPIServerDomain())
 			if err != nil {
 				return fmt.Errorf("add apiserver domain hosts failed %v", err)
@@ -54,10 +58,6 @@ func (k *KubeadmRuntime) joinNodes(newNodesIPList []string) error {
 			err = k.execHostsAppend(node, node, constants.DefaultLvscareDomain)
 			if err != nil {
 				return fmt.Errorf("add lvscare domain hosts failed %v", err)
-			}
-			err = k.registryAuth(node)
-			if err != nil {
-				return err
 			}
 			logger.Info("run ipvs once module: %s", node)
 			err = k.execIPVS(node, masters)
@@ -122,14 +122,12 @@ func (k *KubeadmRuntime) deleteNodes(nodes []string) error {
 }
 
 func (k *KubeadmRuntime) deleteNode(node string) error {
-	//remove node
-	if len(k.getMasterIPList()) > 0 {
-		return k.deleteKubeNode(node)
-	}
-
-	if err := k.resetNode(node); err != nil {
-		return err
-	}
-
-	return nil
+	return k.resetNode(node, func() {
+		//remove node
+		if len(k.getMasterIPList()) > 0 {
+			if err := k.RemoveNodeFromK8sClient(node); err != nil {
+				logger.Warn(fmt.Errorf("delete node %s failed %v", node, err))
+			}
+		}
+	})
 }

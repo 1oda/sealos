@@ -21,6 +21,8 @@ import (
 	"net"
 	"strings"
 
+	"github.com/labring/sealos/pkg/utils/hash"
+
 	"github.com/labring/sealos/pkg/ssh"
 	"github.com/labring/sealos/pkg/utils/iputils"
 	"github.com/labring/sealos/pkg/utils/logger"
@@ -84,21 +86,52 @@ func validateIPList(s string) error {
 	return nil
 }
 
+func getHostArch(sshClient ssh.Interface) func(string) v2.Arch {
+	return func(ip string) v2.Arch {
+		out, err := sshClient.Cmd(ip, "arch")
+		if err != nil {
+			logger.Warn("failed to get host arch: %v, defaults to amd64", err)
+			return v2.AMD64
+		}
+		arch := strings.ToLower(strings.TrimSpace(string(out)))
+		switch arch {
+		case "x86_64":
+			return v2.AMD64
+		case "arm64", "aarch64":
+			return v2.ARM64
+		default:
+			panic(fmt.Sprintf("arch %s not yet supported, feel free to file an issue", arch))
+		}
+	}
+}
+
 // GetHostArch returns the host architecture of the given ip using SSH.
 // Note that hosts of the same type(master/node) must have the same architecture,
 // so we only need to check the first host of the given type.
 func GetHostArch(sshClient ssh.Interface, ip string) string {
-	var arch = string(v2.AMD64)
+	return string(getHostArch(sshClient)(ip))
+}
 
-	cmd, err := sshClient.Cmd(ip, "arch")
-	if err != nil {
-		logger.Error("get host arch failed: %v, defaults to amd64", err)
-		return arch
-	}
-	cmdStr := strings.TrimSpace(string(cmd))
-	if cmdStr != "x86_64" {
-		arch = string(v2.ARM64)
-	}
+func GetImagesDiff(current, desired []string) []string {
+	return stringsutil.RemoveDuplicate(stringsutil.RemoveStrSlice(desired, current))
+}
 
-	return arch
+func CompareImageSpecHash(currentImages []string, desiredImages []string) bool {
+	currentHash := hash.ToString(currentImages)
+	newHash := hash.ToString(desiredImages)
+
+	return currentHash == newHash
+}
+
+func GetNewImages(currentCluster, desiredCluster *v2.Cluster) []string {
+	if desiredCluster == nil {
+		return nil
+	}
+	if currentCluster == nil {
+		return desiredCluster.Spec.Image
+	}
+	if !CompareImageSpecHash(currentCluster.Spec.Image, desiredCluster.Spec.Image) {
+		return GetImagesDiff(currentCluster.Spec.Image, desiredCluster.Spec.Image)
+	}
+	return nil
 }

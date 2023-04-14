@@ -27,14 +27,9 @@ import (
 	"github.com/containers/storage/pkg/homedir"
 )
 
-const (
-	defaultDataRoot = "/var/lib"
-	AppName         = "sealos"
-)
-
 var (
-	DefaultClusterRootFsDir = path.Join(defaultDataRoot, AppName)
-	DefaultRuntimeRootDir   = GetRuntimeRootDir(AppName)
+	DefaultRuntimeRootDir   string
+	DefaultClusterRootFsDir string
 )
 
 const (
@@ -42,7 +37,8 @@ const (
 	DefaultJoinMasterKubeadmFileName = "kubeadm-join-master.yaml"
 	DefaultJoinNodeKubeadmFileName   = "kubeadm-join-node.yaml"
 	DefaultKubeadmTokenFileName      = "kubeadm-token.json"
-	DefaultUpdateKubeadmFileName     = "kubeadm-update.yml"
+	DefaultCertificateKeyFileName    = "kubeadm-certificate-key.txt"
+	DefaultUpdateKubeadmFileName     = "kubeadm-update.yaml"
 	DefaultRootfsKubeadmFileName     = "kubeadm.yml"
 	DataDirName                      = "rootfs"
 	EtcDirName                       = "etc"
@@ -75,6 +71,10 @@ func DataPath() string {
 
 func GetAppWorkDir(clusterName, applicationName string) string {
 	return filepath.Join(DataPath(), clusterName, "applications", applicationName, "workdir")
+}
+
+func GetRootWorkDir(clusterName string) string {
+	return filepath.Join(DataPath(), clusterName, "rootfs")
 }
 
 func IsRegistryDir(entry fs.DirEntry) bool {

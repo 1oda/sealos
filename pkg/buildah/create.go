@@ -15,6 +15,7 @@
 package buildah
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 
@@ -30,6 +31,7 @@ import (
 type createOptions struct {
 	name     string
 	platform string
+	short    bool
 }
 
 func newDefaultCreateOptions() *createOptions {
@@ -42,6 +44,7 @@ func newDefaultCreateOptions() *createOptions {
 func (opts *createOptions) RegisterFlags(fs *pflag.FlagSet) {
 	fs.StringVarP(&opts.name, "cluster", "c", opts.name, "name of cluster to be created but not actually run")
 	fs.StringVar(&opts.platform, "platform", opts.platform, "set the OS/ARCH/VARIANT of the image to the provided value instead of the current operating system and architecture of the host (for example `linux/arm`)")
+	fs.BoolVar(&opts.short, "short", false, "if true, print just the mount path.")
 }
 
 func newCreateCmd() *cobra.Command {
@@ -51,20 +54,27 @@ func newCreateCmd() *cobra.Command {
 		Short: "Create a cluster without running the CMD, for inspecting image",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			oss, arch, variant, err := parse.Platform(opts.platform)
-			if err != nil {
-				return err
-			}
 			bder, err := New("")
 			if err != nil {
 				return err
 			}
-			info, err := bder.Create(opts.name, args[0],
-				WithPlatformOption(v1.Platform{OS: oss, Architecture: arch, Variant: variant}))
+			flagSetters := []FlagSetter{}
+			if flagChanged(c, "platform") {
+				oss, arch, variant, err := parse.Platform(opts.platform)
+				if err != nil {
+					return err
+				}
+				flagSetters = append(flagSetters, WithPlatformOption(v1.Platform{OS: oss, Architecture: arch, Variant: variant}))
+			}
+			info, err := bder.Create(opts.name, args[0], flagSetters...)
 			if err != nil {
 				return err
 			}
-			logger.Info("Mount point: %s", info.MountPoint)
+			if !opts.short {
+				logger.Info("Mount point: %s", info.MountPoint)
+			} else {
+				fmt.Println(info.MountPoint)
+			}
 			if !IsRootless() {
 				return nil
 			}

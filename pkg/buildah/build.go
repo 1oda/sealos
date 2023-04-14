@@ -84,7 +84,7 @@ func newBuildCommand() *cobra.Command {
 	flags.SetNormalizeFunc(buildahcli.AliasFlags)
 
 	bailOnError(markFlagsHidden(flags, "tls-verify"), "")
-
+	bailOnError(markFlagsHidden(flags, append(flagsInBuildCommandToBeHidden(), flagsAssociatedWithPlatform()...)...), "")
 	return buildCommand
 }
 
@@ -126,7 +126,7 @@ func buildCmd(c *cobra.Command, inputArgs []string, sopts saveOptions, iopts bui
 			return fmt.Errorf("cannot find any of %v in context directory", strings.Join(defaultFileNames, ", "))
 		}
 	}
-	if err := setDefaultFlagsWithSetters(c, setDefaultPlatformFlag, setDefaultTLSVerifyFlag); err != nil {
+	if err := setDefaultFlagsWithSetters(c, setDefaultTLSVerifyFlag); err != nil {
 		return err
 	}
 
@@ -144,7 +144,7 @@ func buildCmd(c *cobra.Command, inputArgs []string, sopts saveOptions, iopts bui
 	if err != nil {
 		return err
 	}
-	if err = runSaveImages(options.ContextDirectory, platforms, &sopts); err != nil {
+	if err = runSaveImages(options.ContextDirectory, platforms, options.SystemContext, &sopts); err != nil {
 		return err
 	}
 	if globalFlagResults.DefaultMountsFile != "" {

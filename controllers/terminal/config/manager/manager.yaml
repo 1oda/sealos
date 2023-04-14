@@ -40,6 +40,7 @@ spec:
         - --leader-elect
         image: controller:latest
         name: manager
+        imagePullPolicy: Always
         securityContext:
           runAsNonRoot: true
           allowPrivilegeEscalation: false
@@ -70,5 +71,11 @@ spec:
         env:
           - name: USER_NAMESPACE
             value: "user-system"
+          - name: DOMAIN
+            value: "cloud.sealos.io"
+          - name: SECRET_NAME
+            value: "wildcard-cloud-sealos-io-cert"
+          - name: SECRET_NAMESPACE
+            value: "sealos-system"
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10

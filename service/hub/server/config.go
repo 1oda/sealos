@@ -7,10 +7,15 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/docker/libtrust"
+	"github.com/labring/sealos/pkg/client-go/kubernetes"
 	yaml "gopkg.in/yaml.v2"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
+
+var k8sClient kubernetes.Client
 
 type Config struct {
 	Server ServerConfig `yaml:"server"`
@@ -21,6 +26,12 @@ type Config struct {
 type ServerConfig struct {
 	ListenAddress string `yaml:"addr,omitempty"`
 	PathPrefix    string `yaml:"path_prefix,omitempty"`
+
+	MaxRequestsPerIP         int           `yaml:"max_requests_per_ip,omitempty"`
+	MaxRequestsPerAccount    int           `yaml:"max_requests_per_account,omitempty"`
+	ReqLimitersResetInterval time.Duration `yaml:"req_limiters_reset_interval,omitempty"`
+	WhiteIPCidrList          []string      `yaml:"white_ip_cidr_list,omitempty"`
+	WhiteUserList            []string      `yaml:"white_user_list,omitempty"`
 }
 
 type TokenConfig struct {
@@ -66,6 +77,12 @@ func loadCertAndKey(certFile string, keyFile string) (pk libtrust.PublicKey, prk
 	return
 }
 
+const (
+	DefaultMaxRequestsPerAccount    = 1000
+	DefaultMaxRequestsPerIP         = 1000
+	DefaultReqLimitersResetInterval = 1 * time.Hour
+)
+
 func LoadConfig(fileName string) (*Config, error) {
 	contents, err := os.ReadFile(fileName)
 	if err != nil {
@@ -78,6 +95,15 @@ func LoadConfig(fileName string) (*Config, error) {
 	// set default ListenAddress
 	if c.Server.ListenAddress == "" {
 		c.Server.ListenAddress = ":5001"
+	}
+	if c.Server.MaxRequestsPerIP == 0 {
+		c.Server.MaxRequestsPerIP = DefaultMaxRequestsPerIP
+	}
+	if c.Server.MaxRequestsPerAccount == 0 {
+		c.Server.MaxRequestsPerAccount = DefaultMaxRequestsPerAccount
+	}
+	if c.Server.ReqLimitersResetInterval == 0 {
+		c.Server.ReqLimitersResetInterval = DefaultReqLimitersResetInterval
 	}
 	if err = validate(c); err != nil {
 		return nil, fmt.Errorf("invalid config: %s", err)
@@ -97,6 +123,11 @@ func LoadConfig(fileName string) (*Config, error) {
 	}
 	if !tokenConfigured {
 		return nil, fmt.Errorf("failed to load token cert and key: none provided")
+	}
+	// setup k8sClient by using controller-runtime
+	k8sClient, err = kubernetes.NewKubernetesClientByConfig(ctrl.GetConfigOrDie())
+	if err != nil {
+		return nil, err
 	}
 	return c, nil
 }

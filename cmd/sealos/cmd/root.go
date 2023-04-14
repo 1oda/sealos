@@ -20,16 +20,16 @@ import (
 
 	"github.com/labring/sealos/pkg/buildah"
 	"github.com/labring/sealos/pkg/constants"
+	"github.com/labring/sealos/pkg/system"
 	"github.com/labring/sealos/pkg/utils/file"
 	"github.com/labring/sealos/pkg/utils/logger"
 
 	"github.com/spf13/cobra"
+	"k8s.io/kubectl/pkg/util/templates"
 )
 
 var (
-	debug          bool
-	clusterRootDir string
-	runtimeRootDir string
+	debug bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -45,33 +45,78 @@ var rootCmd = &cobra.Command{
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
+		if rootCmd.SilenceErrors {
+			fmt.Println(err)
+		}
 		os.Exit(1)
 	}
 }
 
 func init() {
 	cobra.OnInitialize(onBootOnDie)
-	fs := rootCmd.PersistentFlags()
-	fs.BoolVar(&debug, "debug", false, "enable debug logger")
-	fs.StringVar(&clusterRootDir, "cluster-root", constants.DefaultClusterRootFsDir, "cluster root directory for remote")
-	_ = fs.MarkHidden("cluster-root")
-	fs.StringVar(&runtimeRootDir, "sealos-root", constants.DefaultRuntimeRootDir, "root directory for sealos actions")
-	_ = fs.MarkHidden("sealos-root")
-	// add unrelated command names that don't required buildah sdk.
-	buildah.AddUnrelatedCommandNames("cert", "status", "docs", "exec", "scp", "version")
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "enable debug logger")
+	buildah.RegisterRootCommand(rootCmd)
+
+	groups := templates.CommandGroups{
+		{
+			Message: "Cluster Management Commands:",
+			Commands: []*cobra.Command{
+				newApplyCmd(),
+				newCertCmd(),
+				newRunCmd(),
+				newResetCmd(),
+				newStatusCmd(),
+			},
+		},
+		{
+			Message: "Node Management Commands:",
+			Commands: []*cobra.Command{
+				newAddCmd(),
+				newDeleteCmd(),
+			},
+		},
+		{
+			Message: "Remote Operation Commands:",
+			Commands: []*cobra.Command{
+				newExecCmd(),
+				newScpCmd(),
+			},
+		},
+		{
+			Message:  "Container and Image Commands:",
+			Commands: buildah.AllSubCommands(),
+		},
+	}
+	groups.Add(rootCmd)
+	filters := []string{}
+	templates.ActsAsRootCommand(rootCmd, filters, groups...)
+	rootCmd.AddCommand(system.NewConfigCmd())
+}
+
+// add unrelated command names that don't required buildah sdk.
+func setCommandUnrelatedToBuildah(cmd *cobra.Command) {
+	buildah.AddUnrelatedCommandNames(cmd.Name())
 }
 
 func onBootOnDie() {
-	constants.DefaultClusterRootFsDir = clusterRootDir
-	constants.DefaultRuntimeRootDir = runtimeRootDir
+	val, err := system.Get(system.DataRootConfigKey)
+	errExit(err)
+	constants.DefaultClusterRootFsDir = val
+	val, err = system.Get(system.RuntimeRootConfigKey)
+	errExit(err)
+	constants.DefaultRuntimeRootDir = val
+
 	var rootDirs = []string{
 		constants.LogPath(),
 		constants.Workdir(),
 	}
-	if err := file.MkDirs(rootDirs...); err != nil {
-		logger.Error(err)
-		panic(1)
-	}
+	errExit(file.MkDirs(rootDirs...))
 	logger.CfgConsoleAndFileLogger(debug, constants.LogPath(), "sealos", false)
+}
+
+func errExit(err error) {
+	if err != nil {
+		logger.Error(err)
+		os.Exit(1)
+	}
 }

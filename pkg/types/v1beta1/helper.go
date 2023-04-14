@@ -79,6 +79,16 @@ func UpdateCondition(conditions []ClusterCondition, condition ClusterCondition) 
 	}
 	return conditions
 }
+
+// UpdateCommandCondition updates condition in cluster conditions using giving condition, append only
+func UpdateCommandCondition(cmdConditions []CommandCondition, cmdCondition CommandCondition) []CommandCondition {
+	if cmdConditions == nil {
+		cmdConditions = make([]CommandCondition, 0)
+	}
+	cmdConditions = append(cmdConditions, cmdCondition)
+	return cmdConditions
+}
+
 func DeleteCondition(conditions []ClusterCondition, conditionType string) []ClusterCondition {
 	if conditions == nil {
 		conditions = make([]ClusterCondition, 0)
@@ -92,4 +102,13 @@ func DeleteCondition(conditions []ClusterCondition, conditionType string) []Clus
 	}
 	conditions = newConditions
 	return conditions
+}
+
+func In(key string, slice []string) bool {
+	for _, s := range slice {
+		if key == s {
+			return true
+		}
+	}
+	return false
 }

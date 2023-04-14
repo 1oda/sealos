@@ -17,14 +17,14 @@ limitations under the License.
 package checker
 
 import (
+	"errors"
+	"fmt"
 	"os"
 
-	"github.com/labring/sealos/pkg/template"
-
 	"github.com/labring/image-cri-shim/pkg/types"
-	"github.com/pkg/errors"
 
 	"github.com/labring/sealos/pkg/buildimage"
+	"github.com/labring/sealos/pkg/template"
 	v2 "github.com/labring/sealos/pkg/types/v1beta1"
 	"github.com/labring/sealos/pkg/utils/logger"
 )
@@ -38,7 +38,7 @@ type CRIShimStatus struct {
 	Error     string
 }
 
-func (n *CRIShimChecker) Check(cluster *v2.Cluster, phase string) error {
+func (n *CRIShimChecker) Check(_ *v2.Cluster, phase string) error {
 	if phase != PhasePost {
 		return nil
 	}
@@ -52,24 +52,22 @@ func (n *CRIShimChecker) Check(cluster *v2.Cluster, phase string) error {
 
 	criShimConfig := "/etc/image-cri-shim.yaml"
 	if shimCfg, err := types.Unmarshal(criShimConfig); err != nil {
-		status.Error = errors.Wrap(err, "read image-cri-shim config error").Error()
+		status.Error = fmt.Errorf("read image-cri-shim config error: %w", err).Error()
 	} else {
 		status.Config = map[string]string{}
 
 		status.Config["ShimSocket"] = shimCfg.ImageShimSocket
 		status.Config["CRISocket"] = shimCfg.RuntimeSocket
 		status.Config["RegistryAddress"] = shimCfg.Address
-		status.Config["CRIVersion"] = string(shimCfg.CRIVersion)
 		if status.Config["CRIVersion"] == "" {
 			delete(status.Config, "CRIVersion")
 		}
 		status.Config["RegistryAuth"] = shimCfg.Auth
-		status.Config["RootfsImageList"] = shimCfg.Image
 
 		if dir := status.Config["RootfsImageList"]; dir != "" {
 			images, err := buildimage.ParseShimImages(dir)
 			if err != nil {
-				status.Error = errors.Wrap(err, "read image-cri-shim config error").Error()
+				status.Error = fmt.Errorf("read image-cri-shim config error: %w", err).Error()
 			} else {
 				status.ImageList = images
 			}
@@ -102,10 +100,7 @@ CRIShim Service Status
 		}
 		return errors.New("convert cri-shim template failed")
 	}
-	if err = tpl.Execute(os.Stdout, status); err != nil {
-		return err
-	}
-	return nil
+	return tpl.Execute(os.Stdout, status)
 }
 
 func NewCRIShimChecker() Interface {

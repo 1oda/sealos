@@ -22,6 +22,8 @@ import (
 	"path"
 	"strings"
 
+	"github.com/containers/buildah/pkg/parse"
+
 	"github.com/containers/buildah"
 	buildahcli "github.com/containers/buildah/pkg/cli"
 	"github.com/containers/buildah/util"
@@ -57,23 +59,32 @@ func newMergeCommand() *cobra.Command {
 			return buildCmd(cmd, []string{buildahInfo.MountPoint}, sopts, br)
 		},
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			arch := getArchFromFlag(cmd)
-			oss := getOSFromFlag(cmd)
-			variant := getVariantFromFlags(cmd)
 			tag := getTagsFromFlags(cmd)
-			logger.Debug("os: %s, arch: %s, variant: %s, tag: %+v", oss, arch, variant, tag)
-
-			platform := v1.Platform{
-				Architecture: arch,
-				OS:           oss,
-				Variant:      variant,
-			}
 			var err error
-			buildahInfo, err = mergeImagesWithScratchContainer(tag[0], args, platform)
+			flagSetters := []FlagSetter{}
+			if flagChanged(cmd, "platform") {
+				platformFlags := getPlatformFromFlags(cmd)
+				if len(platformFlags) != 1 {
+					return fmt.Errorf("only one platform is allowed")
+				}
+				oss, arch, variant, err := parse.Platform(platformFlags[0])
+				if err != nil {
+					return err
+				}
+				logger.Debug("os: %s, arch: %s, variant: %s, tag: %+v", oss, arch, variant, tag)
+				platform := v1.Platform{
+					Architecture: arch,
+					OS:           oss,
+					Variant:      variant,
+				}
+				flagSetters = append(flagSetters, WithPlatformOption(platform))
+			}
+
+			buildahInfo, err = mergeImagesWithScratchContainer(tag[0], args, flagSetters)
 			if err != nil {
 				return err
 			}
-			return setDefaultFlagIfNotChanged(cmd, "save-image", "false")
+			return setDefaultFlagsWithSetters(cmd, setDefaultTLSVerifyFlag, setDefaultSaveImageFlag)
 		},
 		PostRunE: func(cmd *cobra.Command, args []string) error {
 			tag := getTagsFromFlags(cmd)
@@ -91,7 +102,7 @@ func newMergeCommand() *cobra.Command {
 		},
 		Args: cobra.MinimumNArgs(2),
 		Example: fmt.Sprintf(`
-  %[1]s merge kubernetes:v1.19.9 mysql:5.7.0 redis:6.0.0 -t new:0.1.0`, rootCmd.CommandPath()),
+  %[1]s merge -t new:0.1.0 kubernetes:v1.19.9 mysql:5.7.0 redis:6.0.0`, rootCmd.CommandPath()),
 	}
 	mergeCommand.SetUsageTemplate(UsageTemplate())
 
@@ -112,29 +123,33 @@ func newMergeCommand() *cobra.Command {
 	flags.SetNormalizeFunc(buildahcli.AliasFlags)
 	bailOnError(markFlagsHidden(flags, "save-image"), "")
 	bailOnError(markFlagsHidden(flags, "tls-verify"), "")
+	bailOnError(markFlagsHidden(flags, append(flagsInBuildCommandToBeHidden(), flagsAssociatedWithPlatform()...)...), "")
 	return mergeCommand
 }
 
-func mergeImagesWithScratchContainer(newImageName string, images []string, platform v1.Platform) (*buildah.BuilderInfo, error) {
+func mergeImagesWithScratchContainer(newImageName string, images []string, setters []FlagSetter) (*buildah.BuilderInfo, error) {
 	b, err := New("")
 	if err != nil {
 		return nil, err
 	}
 	cName := fmt.Sprintf("%s-%s", newImageName, rand.Generator(8))
-	bInfo, err := b.Create(cName, "scratch", WithPlatformOption(platform))
+	bInfo, err := b.Create(cName, "scratch", setters...)
 	if err != nil {
 		return nil, err
 	}
 	logger.Debug("mergeDir: %s", bInfo.MountPoint)
-	if err = b.Pull(images, WithPlatformOption(platform), WithPullPolicyOption(PullIfMissing.String())); err != nil {
+	if err = b.Pull(images, append(setters, WithPullPolicyOption(PullIfMissing.String()))...); err != nil {
 		return nil, err
 	}
 
 	imageObjList := make([]map[string]v1.Image, 0)
 	for _, i := range images {
-		obj, _ := b.InspectImage(i)
+		obj, err := b.InspectImage(i)
+		if err != nil {
+			logger.Error("InspectImage error: %+v", err)
+		}
 		if obj != nil {
-			imageObjList = append(imageObjList, map[string]v1.Image{i: *obj})
+			imageObjList = append(imageObjList, map[string]v1.Image{i: *obj.OCIv1})
 		}
 	}
 

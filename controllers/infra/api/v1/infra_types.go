@@ -19,10 +19,10 @@ package v1
 import (
 	"fmt"
 
+	"github.com/labring/sealos/controllers/infra/common"
 	v1bata1 "github.com/labring/sealos/pkg/types/v1beta1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/kustomize/kyaml/resid"
 )
 
 /*
@@ -80,10 +80,11 @@ type IPAddress struct {
 
 type Metadata struct {
 	// 0 private , 1 public
-	IP     []IPAddress `json:"ipaddress,omitempty"`
-	ID     string      `json:"id,omitempty"`
-	DiskID []string    `json:"diskId,omitempty"`
-	Status string      `json:"status,omitempty"`
+	IP     []IPAddress       `json:"ipaddress,omitempty"`
+	ID     string            `json:"id,omitempty"`
+	DiskID []string          `json:"diskId,omitempty"`
+	Status string            `json:"status,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 type Hosts struct {
@@ -130,54 +131,43 @@ func (hosts IndexHosts) Swap(i, j int) {
 	hosts[i], hosts[j] = hosts[j], hosts[i]
 }
 
-type IndexDisks []Disk
-
-func (disks IndexDisks) Len() int {
-	return len(disks)
-}
-
-func (disks IndexDisks) Less(i, j int) bool {
-	return disks[i].Index < disks[j].Index
-}
-
-func (disks IndexDisks) Swap(i, j int) {
-	disks[i], disks[j] = disks[j], disks[i]
-}
-
 type Disk struct {
 	Capacity int `json:"capacity,omitempty"`
 	// ENUM: standard/io1/io2/gp2/gp3/sc1/st1
-	// +kubebuilder:validation:Enum=standard;io1;io2;gp2;gp3;sc1;st1
+	// +kubebuilder:validation:Enum=standard;io1;io2;gp2;gp3;sc1;st1;cloud_efficiency;cloud_ssd;cloud_essd;cloud_auto;cloud
 	VolumeType string `json:"volumeType,omitempty"`
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:Enum=root;data
 	// +kubebuilder:default:=data
 	// Disk Type , default is data disk. allowed value is `root|data`
-	Type string `json:"type,omitempty"`
-	//Name  string `json:"name,omitempty"`
-	Index int    `json:"index,omitempty"`
-	ID    string `json:"id,omitempty"`
+	Type   string   `json:"type,omitempty"`
+	Device string   `json:"device,omitempty"`
+	ID     []string `json:"id,omitempty"`
 }
 
-//type NameDisks []Disk
-//
-//func (disks NameDisks) Len() int {
-//	return len(disks)
-//}
-//
-//func (disks NameDisks) Less(i, j int) bool {
-//	return disks[i].Name < disks[j].Name
-//}
-//
-//func (disks NameDisks) Swap(i, j int) {
-//	disks[i], disks[j] = disks[j], disks[i]
-//}
+type DeviceDisks []Disk
+
+func (disks DeviceDisks) Len() int {
+	return len(disks)
+}
+
+func (disks DeviceDisks) Less(i, j int) bool {
+	return disks[i].Device < disks[j].Device
+}
+
+func (disks DeviceDisks) Swap(i, j int) {
+	disks[i], disks[j] = disks[j], disks[i]
+}
 
 // InfraSpec defines the desired state of Infra
 type InfraSpec struct {
 	// desired state of infra
 	// Important: Run "make" to regenerate code after modifying this file
 
+	// ENUM: aws/aliyun
+	// +kubebuilder:validation:Enum=aws;aliyun
+	// +kubebuilder:default:=aws
+	Platform string `json:"platform,omitempty"`
 	// RegionIDs is cloud provider regionID list
 	RegionIDs []string    `json:"regionIDs,omitempty"`
 	ZoneIDs   []string    `json:"zoneIDs,omitempty"`
@@ -247,7 +237,7 @@ type InfraList struct {
 func (i *Infra) GetInstancesAndVolumesTag() string {
 	namespace := i.Namespace
 	if namespace == "" {
-		namespace = resid.DefaultNamespace
+		namespace = common.DefaultNamespace
 	}
 	// TODO maybe we also needs a cluster identify
 	return fmt.Sprintf("%s/%s", namespace, i.Name)

@@ -75,11 +75,12 @@ spec:
                         properties:
                           capacity:
                             type: integer
-                          id:
+                          device:
                             type: string
-                          index:
-                            description: Name  string `json:"name,omitempty"`
-                            type: integer
+                          id:
+                            items:
+                              type: string
+                            type: array
                           type:
                             default: data
                             description: Disk Type , default is data disk. allowed
@@ -98,6 +99,11 @@ spec:
                             - gp3
                             - sc1
                             - st1
+                            - cloud_efficiency
+                            - cloud_ssd
+                            - cloud_essd
+                            - cloud_auto
+                            - cloud
                             type: string
                         type: object
                       maxItems: 10
@@ -131,6 +137,10 @@ spec:
                                   type: string
                               type: object
                             type: array
+                          labels:
+                            additionalProperties:
+                              type: string
+                            type: object
                           status:
                             type: string
                         type: object
@@ -151,6 +161,13 @@ spec:
                       type: array
                   type: object
                 type: array
+              platform:
+                default: aws
+                description: 'ENUM: aws/aliyun'
+                enum:
+                - aws
+                - aliyun
+                type: string
               regionIDs:
                 description: RegionIDs is cloud provider regionID list
                 items:
@@ -243,6 +260,18 @@ metadata:
   creationTimestamp: null
   name: infra-manager-role
 rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - infra.sealos.io
   resources:
@@ -431,7 +460,11 @@ spec:
         - --leader-elect
         command:
         - /manager
-        image: docker.io/xiaojie99999/infra:v0.0.1
+        envFrom:
+        - secretRef:
+            name: infra-secret
+        image: ghcr.io/labring/sealos-infra-controller:dev
+        imagePullPolicy: Always
         livenessProbe:
           httpGet:
             path: /healthz

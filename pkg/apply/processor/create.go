@@ -72,25 +72,22 @@ func (c *CreateProcessor) GetPipeLine() ([]func(cluster *v2.Cluster) error, erro
 		c.RunGuest,
 		// c.GetPhasePluginFunc(plugin.PhasePostInstall),
 	)
+
 	return todoList, nil
 }
 
 func (c *CreateProcessor) Check(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline Check in CreateProcessor.")
-	err := checker.RunCheckList([]checker.Interface{checker.NewHostChecker()}, cluster, checker.PhasePre)
-	if err != nil {
-		return err
-	}
-	return nil
+	return NewCheckError(checker.RunCheckList([]checker.Interface{checker.NewHostChecker()}, cluster, checker.PhasePre))
 }
 
 func (c *CreateProcessor) PreProcess(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline PreProcess in CreateProcessor.")
+	return NewPreProcessError(c.preProcess(cluster))
+}
 
+func (c *CreateProcessor) preProcess(cluster *v2.Cluster) error {
 	if err := MountClusterImages(cluster, c.Buildah); err != nil {
-		return err
-	}
-	if err := SyncClusterStatus(cluster, c.Buildah, false); err != nil {
 		return err
 	}
 	runTime, err := runtime.NewDefaultRuntime(cluster, c.ClusterFile.GetKubeadmConfig())
@@ -133,17 +130,12 @@ func (c *CreateProcessor) Bootstrap(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline Bootstrap in CreateProcessor")
 	hosts := append(cluster.GetMasterIPAndPortList(), cluster.GetNodeIPAndPortList()...)
 	bs := bootstrap.New(cluster)
-	if err := bs.Preflight(hosts...); err != nil {
-		return err
-	}
-	if err := bs.Init(hosts...); err != nil {
-		return err
-	}
-	return bs.ApplyAddons(hosts...)
+	return bs.Apply(hosts...)
 }
 
-func (c *CreateProcessor) Init(cluster *v2.Cluster) error {
+func (c *CreateProcessor) Init(_ *v2.Cluster) error {
 	logger.Info("Executing pipeline Init in CreateProcessor.")
+	// move init runtime here?
 	return c.Runtime.Init()
 }
 

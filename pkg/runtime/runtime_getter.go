@@ -25,7 +25,6 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/labring/sealos/pkg/bootstrap"
 	"github.com/labring/sealos/pkg/constants"
 	"github.com/labring/sealos/pkg/env"
 	"github.com/labring/sealos/pkg/remote"
@@ -34,13 +33,6 @@ import (
 	"github.com/labring/sealos/pkg/utils/iputils"
 	"github.com/labring/sealos/pkg/utils/logger"
 )
-
-func (k *KubeadmRuntime) getRegistry() *v1beta1.RegistryConfig {
-	k.registryOnce.Do(func() {
-		k.Registry = bootstrap.GetRegistryInfo(k.getSSHInterface(), k.getContentData().RootFSPath(), k.getRegistryIPAndPort())
-	})
-	return k.Registry
-}
 
 func (k *KubeadmRuntime) getKubeVersion() string {
 	return k.ClusterConfiguration.KubernetesVersion
@@ -85,10 +77,6 @@ func (k *KubeadmRuntime) getNodeIPAndPortList() []string {
 
 func (k *KubeadmRuntime) getMaster0IPAndPort() string {
 	return k.Cluster.GetMaster0IPAndPort()
-}
-
-func (k *KubeadmRuntime) getRegistryIPAndPort() string {
-	return k.Cluster.GetRegistryIPAndPort()
 }
 
 func (k *KubeadmRuntime) getMaster0IPAPIServer() string {
@@ -155,8 +143,8 @@ func (k *KubeadmRuntime) execIPVSPod(ip string, masters []string) error {
 	return k.getRemoteInterface().StaticPod(ip, k.getVipAndPort(), constants.LvsCareStaticPodName, image, masters)
 }
 
-func (k *KubeadmRuntime) execToken(ip string) (string, error) {
-	return k.getRemoteInterface().Token(ip)
+func (k *KubeadmRuntime) execToken(ip, certificateKey string) (string, error) {
+	return k.getRemoteInterface().Token(ip, k.initMasterKubeadmConfigFile(), certificateKey)
 }
 func (k *KubeadmRuntime) execHostname(ip string) (string, error) {
 	hostname, err := k.getRemoteInterface().Hostname(ip)
@@ -177,14 +165,6 @@ func (k *KubeadmRuntime) execCert(ip string) error {
 
 func (k *KubeadmRuntime) execHostsDelete(ip, domain string) error {
 	return k.getRemoteInterface().HostsDelete(ip, domain)
-}
-
-func (k *KubeadmRuntime) execClean(ip string) error {
-	return k.getSSHInterface().CmdAsync(ip, k.getENVInterface().WrapperShell(ip, k.getScriptsBash().CleanBash()))
-}
-
-func (k *KubeadmRuntime) execAuth(ip string) error {
-	return k.getSSHInterface().CmdAsync(ip, k.getENVInterface().WrapperShell(ip, k.getScriptsBash().AuthBash()))
 }
 
 func (k *KubeadmRuntime) sshCmdAsync(host string, cmd ...string) error {
@@ -217,11 +197,6 @@ func (k *KubeadmRuntime) getENVInterface() env.Interface {
 
 func (k *KubeadmRuntime) getRemoteInterface() remote.Interface {
 	return remote.New(k.getClusterName(), k.getSSHInterface())
-}
-
-func (k *KubeadmRuntime) getScriptsBash() constants.Bash {
-	render := k.getImageLabels()
-	return constants.NewBash(k.getClusterName(), render)
 }
 
 func (k *KubeadmRuntime) getContentData() constants.Data {

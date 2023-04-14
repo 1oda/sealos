@@ -22,7 +22,6 @@ import (
 	"io/fs"
 	"path"
 
-	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/labring/sealos/pkg/constants"
@@ -69,18 +68,20 @@ func (f *defaultRootfs) mountRootfs(cluster *v2.Cluster, ipList []string) error 
 				logger.Debug("Image %s not exist, render env continue", src.ImageName)
 				return nil
 			}
-			err := renderENV(src.MountPoint, ipList, envProcessor)
+			// TODO: if we are planing to support rendering templates for each host,
+			// then move this rendering process before ssh.CopyDir and do it one by one.
+			err := renderTemplatesWithEnv(src.MountPoint, ipList, envProcessor)
 			if err != nil {
-				return errors.Wrap(err, "failed to render env")
+				return fmt.Errorf("failed to render env: %w", err)
 			}
 			dirs, err := file.StatDir(src.MountPoint, true)
 			if err != nil {
-				return errors.Wrap(err, "failed to stat files")
+				return fmt.Errorf("failed to stat files: %w", err)
 			}
 			if len(dirs) != 0 {
 				_, err = exec.RunBashCmd(fmt.Sprintf(constants.DefaultChmodBash, src.MountPoint))
 				if err != nil {
-					return errors.Wrap(err, "run chmod to rootfs failed")
+					return fmt.Errorf("run chmod to rootfs failed: %w", err)
 				}
 			}
 			return nil
@@ -140,33 +141,32 @@ func (f *defaultRootfs) mountRootfs(cluster *v2.Cluster, ipList []string) error 
 func (f *defaultRootfs) unmountRootfs(cluster *v2.Cluster, ipList []string) error {
 	clusterRootfsDir := constants.NewData(f.getClusterName(cluster)).Homedir()
 	rmRootfs := fmt.Sprintf("rm -rf %s", clusterRootfsDir)
-
+	deleteHomeDirCmd := fmt.Sprintf("rm -rf %s", constants.ClusterDir(cluster.Name))
 	eg, _ := errgroup.WithContext(context.Background())
 	for _, IP := range ipList {
 		ip := IP
 		eg.Go(func() error {
 			SSH := f.getSSH(cluster)
-			return SSH.CmdAsync(ip, rmRootfs)
+			return SSH.CmdAsync(ip, rmRootfs, deleteHomeDirCmd)
 		})
 	}
 	return eg.Wait()
 }
 
-func renderENV(mountDir string, ipList []string, p env.Interface) error {
+func renderTemplatesWithEnv(mountDir string, ipList []string, p env.Interface) error {
 	var (
 		renderEtc       = path.Join(mountDir, constants.EtcDirName)
 		renderScripts   = path.Join(mountDir, constants.ScriptsDirName)
 		renderManifests = path.Join(mountDir, constants.ManifestsDirName)
 	)
 
-	for _, ip := range ipList {
-		for _, dir := range []string{renderEtc, renderScripts, renderManifests} {
-			logger.Debug("render env dir: %s", dir)
-			if file.IsExist(dir) {
-				err := p.RenderAll(ip, dir)
-				if err != nil {
-					return err
-				}
+	// currently only render once
+	for _, dir := range []string{renderEtc, renderScripts, renderManifests} {
+		logger.Debug("render env dir: %s", dir)
+		if file.IsExist(dir) {
+			err := p.RenderAll(ipList[0], dir)
+			if err != nil {
+				return err
 			}
 		}
 	}

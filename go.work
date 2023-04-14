@@ -1,9 +1,11 @@
-go 1.19
+go 1.20
 
 use (
 	.
+	./controllers/account
 	./controllers/app
 	./controllers/cluster
+	./controllers/db/bytebase
 	./controllers/imagehub
 	./controllers/infra
 	./controllers/metering
@@ -15,4 +17,6 @@ use (
 	./staging/src/github.com/labring/image-cri-shim
 	./staging/src/github.com/labring/lvscare
 	./webhooks/whitelist
+	./controllers/common
+
 )

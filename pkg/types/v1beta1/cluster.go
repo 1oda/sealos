@@ -48,15 +48,24 @@ type RegistryConfig struct {
 type ImageType string
 
 const (
-	AppImage                  ImageType = "application"
-	RootfsImage               ImageType = "rootfs"
-	PatchImage                ImageType = "patch"
-	ImageKubeVersionKey                 = "version"
-	ImageVIPKey                         = "vip"
-	ImageKubeLvscareImageKey            = "image"
-	ImageTypeKey                        = "sealos.io.type"
-	ImageKubeVersionEnvSysKey           = "SEALOS_SYS_KUBE_VERSION"
+	AppImage                    ImageType = "application"
+	RootfsImage                 ImageType = "rootfs"
+	PatchImage                  ImageType = "patch"
+	ImageKubeVersionKey                   = "version"
+	ImageVIPKey                           = "vip"
+	ImageKubeLvscareImageKey              = "image"
+	ImageTypeKey                          = "sealos.io.type"
+	ImageTypeVersionKey                   = "sealos.io.version"
+	ImageKubeVersionEnvSysKey             = "SEALOS_SYS_KUBE_VERSION"
+	ImageSealosVersionEnvSysKey           = "SEALOS_SYS_SEALOS_VERSION"
 )
+
+const (
+	ImageTypeVersionKeyV1Beta1 = "v1beta1"
+	ImageTypeVersionKeyV1Beta2 = "v1beta2"
+)
+
+var ImageVersionList = []string{ImageTypeVersionKeyV1Beta1, ImageTypeVersionKeyV1Beta2}
 
 type MountImage struct {
 	Name       string            `json:"name"`
@@ -77,6 +86,15 @@ const (
 	ClusterInProcess ClusterPhase = "ClusterInProcess"
 )
 
+const (
+	ClusterConditionTypeSuccess string = "ApplyClusterSuccess"
+	ClusterConditionTypeError   string = "ApplyClusterError"
+
+	CommandConditionTypeSuccess   string = "ApplyCommandSuccess"
+	CommandConditionTypeError     string = "ApplyCommandError"
+	CommandConditionTypeCancelled string = "ApplyCommandCancelled"
+)
+
 // ClusterCondition describes the state of a cluster at a certain point.
 type ClusterCondition struct {
 	Type              string             `json:"type"`
@@ -88,10 +106,74 @@ type ClusterCondition struct {
 	Message string `json:"message,omitempty"`
 }
 
+func NewSuccessClusterCondition() ClusterCondition {
+	return ClusterCondition{
+		Type:              ClusterConditionTypeSuccess,
+		Status:            v1.ConditionTrue,
+		LastHeartbeatTime: metav1.Now(),
+		Reason:            "Ready",
+		Message:           "Applied to cluster successfully",
+	}
+}
+
+func NewFailedClusterCondition(message string) ClusterCondition {
+	return ClusterCondition{
+		Type:              ClusterConditionTypeError,
+		Status:            v1.ConditionFalse,
+		LastHeartbeatTime: metav1.Now(),
+		Reason:            "Apply Cluster",
+		Message:           message,
+	}
+}
+
+type CommandCondition struct {
+	Type              string             `json:"type"`
+	Status            v1.ConditionStatus `json:"status"`
+	LastHeartbeatTime metav1.Time        `json:"lastHeartbeatTime,omitempty"`
+
+	// +optional
+	Images []string `json:"images"`
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+func NewSuccessCommandCondition() CommandCondition {
+	return CommandCondition{
+		Type:              CommandConditionTypeSuccess,
+		Status:            v1.ConditionTrue,
+		LastHeartbeatTime: metav1.Now(),
+		Reason:            "Apply Command",
+		Message:           "Applied to cluster successfully",
+	}
+}
+
+func NewFailedCommandCondition(message string) CommandCondition {
+	return CommandCondition{
+		Type:              CommandConditionTypeError,
+		Status:            v1.ConditionFalse,
+		LastHeartbeatTime: metav1.Now(),
+		Reason:            "Apply Command",
+		Message:           message,
+	}
+}
+
+func NewCancelledCommandCondition(message string) CommandCondition {
+	return CommandCondition{
+		Type:              CommandConditionTypeCancelled,
+		Status:            v1.ConditionFalse,
+		LastHeartbeatTime: metav1.Now(),
+		Reason:            "Apply Command",
+		Message:           message,
+	}
+}
+
 type ClusterStatus struct {
-	Phase      ClusterPhase       `json:"phase,omitempty"`
-	Mounts     []MountImage       `json:"mounts,omitempty"`
-	Conditions []ClusterCondition `json:"conditions,omitempty" `
+	Phase             ClusterPhase       `json:"phase,omitempty"`
+	Mounts            []MountImage       `json:"mounts,omitempty"`
+	Conditions        []ClusterCondition `json:"conditions,omitempty"`
+	CommandConditions []CommandCondition `json:"commandCondition,omitempty"`
 }
 
 type SSH struct {
@@ -107,8 +189,8 @@ type SSH struct {
 type Host struct {
 	IPS   []string `json:"ips,omitempty"`
 	Roles []string `json:"roles,omitempty"`
-	//overwrite env
-	Env []string `json:"env,omitempty"`
+	Env   []string `json:"env,omitempty"` // overwrite env
+	SSH   *SSH     `json:"ssh,omitempty"` // overwrite global ssh config
 }
 
 type ImageList []string

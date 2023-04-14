@@ -82,6 +82,7 @@ func (c *ScaleProcessor) GetPipeLine() ([]func(cluster *v2.Cluster) error, error
 		c.DeleteCheck,
 		c.PreProcess,
 		c.Delete,
+		c.UndoBootstrap,
 		//c.ApplyCleanPlugin,
 		c.UnMountRootfs,
 	)
@@ -139,11 +140,7 @@ func (c *ScaleProcessor) JoinCheck(cluster *v2.Cluster) error {
 	ips = append(ips, cluster.GetMaster0IPAndPort())
 	ips = append(ips, c.MastersToJoin...)
 	ips = append(ips, c.NodesToJoin...)
-	err := checker.RunCheckList([]checker.Interface{checker.NewIPsHostChecker(ips)}, cluster, checker.PhasePre)
-	if err != nil {
-		return err
-	}
-	return nil
+	return NewCheckError(checker.RunCheckList([]checker.Interface{checker.NewIPsHostChecker(ips)}, cluster, checker.PhasePre))
 }
 
 func (c *ScaleProcessor) DeleteCheck(cluster *v2.Cluster) error {
@@ -152,14 +149,14 @@ func (c *ScaleProcessor) DeleteCheck(cluster *v2.Cluster) error {
 	ips = append(ips, cluster.GetMaster0IPAndPort())
 	//ips = append(ips, c.MastersToDelete...)
 	//ips = append(ips, c.NodesToDelete...)
-	err := checker.RunCheckList([]checker.Interface{checker.NewIPsHostChecker(ips)}, cluster, checker.PhasePre)
-	if err != nil {
-		return err
-	}
-	return nil
+	return NewCheckError(checker.RunCheckList([]checker.Interface{checker.NewIPsHostChecker(ips)}, cluster, checker.PhasePre))
 }
 
 func (c *ScaleProcessor) PreProcess(cluster *v2.Cluster) error {
+	return NewPreProcessError(c.preProcess(cluster))
+}
+
+func (c *ScaleProcessor) preProcess(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline PreProcess in ScaleProcessor.")
 	err := c.ClusterFile.Process()
 	if err != nil {
@@ -255,13 +252,14 @@ func (c *ScaleProcessor) Bootstrap(cluster *v2.Cluster) error {
 	logger.Info("Executing pipeline Bootstrap in ScaleProcessor")
 	hosts := append(c.MastersToJoin, c.NodesToJoin...)
 	bs := bootstrap.New(cluster)
-	if err := bs.Preflight(hosts...); err != nil {
-		return err
-	}
-	if err := bs.Init(hosts...); err != nil {
-		return err
-	}
-	return bs.ApplyAddons(hosts...)
+	return bs.Apply(hosts...)
+}
+
+func (c *ScaleProcessor) UndoBootstrap(cluster *v2.Cluster) error {
+	logger.Info("Executing pipeline UndoBootstrap in ScaleProcessor")
+	hosts := append(c.MastersToDelete, c.NodesToDelete...)
+	bs := bootstrap.New(cluster)
+	return bs.Delete(hosts...)
 }
 
 func NewScaleProcessor(clusterFile clusterfile.Interface, name string, images v2.ImageList, masterToJoin, masterToDelete, nodeToJoin, nodeToDelete []string) (Interface, error) {

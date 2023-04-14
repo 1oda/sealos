@@ -20,10 +20,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/labring/sealos/pkg/utils/logger"
-
 	"helm.sh/helm/v3/pkg/cli/values"
 	"helm.sh/helm/v3/pkg/getter"
+
+	"github.com/labring/sealos/pkg/utils/logger"
 
 	"github.com/labring/sealos/pkg/constants"
 	"github.com/labring/sealos/pkg/runtime"
@@ -159,7 +159,7 @@ func (c *ClusterFile) DecodeConfigs(data []byte) error {
 }
 
 func (c *ClusterFile) DecodeKubeadmConfig(data []byte) error {
-	kubeadmConfig, err := runtime.LoadKubeadmConfigs(string(data), runtime.DecodeCRDFromString)
+	kubeadmConfig, err := runtime.LoadKubeadmConfigs(string(data), c.setDefaults, runtime.DecodeCRDFromString)
 	if err != nil {
 		return err
 	}
